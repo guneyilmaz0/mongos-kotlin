@@ -171,8 +171,55 @@ open class Database {
             .associate { it[KEY_FIELD].toString() to it[VALUE_FIELD]!! }
 
     /**
+     * Retrieves all documents from the specified collection as a list of objects.
+     *
+     * @param T The type of objects to retrieve.
+     * @param collection The name of the collection.
+     * @return A list of objects of the specified type.
+     */
+    inline fun <reified T> getAll(collection: String): List<T> {
+        val results = mutableListOf<T>()
+        val documents = database.getCollection(collection).find().toList()
+        for (doc in documents) {
+            if (MongoSObject::class.java.isAssignableFrom(T::class.java)) {
+                val parsed = documentToObject(doc, T::class.java)
+                if (parsed != null) results.add(parsed)
+            } else {
+                (doc[VALUE_FIELD] as? T)?.let { results.add(it) }
+            }
+        }
+        return results
+    }
+
+    /**
+     * Retrieves all documents from the specified collection as a list of objects based on filters.
+     *
+     * @param T The type of objects to retrieve.
+     * @param collection The name of the collection.
+     * @param filters A map where each entry represents key1 -> key2 pairs to filter.
+     * @return A list of objects of the specified type.
+     */
+    inline fun <reified T> getAll(collection: String, filters: Map<String, String>): List<T> {
+        val results = mutableListOf<T>()
+        val queryFilters = Filters.and(filters.map { Filters.eq(it.key, it.value) })
+        val documents = database.getCollection(collection).find(queryFilters).toList()
+        for (doc in documents) {
+            if (MongoSObject::class.java.isAssignableFrom(T::class.java)) {
+                val parsed = documentToObject(doc, T::class.java)
+                if (parsed != null) results.add(parsed)
+            } else {
+                (doc[VALUE_FIELD] as? T)?.let { results.add(it) }
+            }
+        }
+        return results
+    }
+
+    /**
      * Retrieves a value from the specified collection with the provided key.
-     * If the key does not exist, returns the provided default value or throws an exception.
+     * If the key does not exist, returns the provided default value or   inline fun <reified T> getAll(collection: String): List<T> {
+     *
+     *     }
+     *  throws an exception.
      * This method is for Java compatibility.
      *
      * @param T The type of the value to retrieve.
