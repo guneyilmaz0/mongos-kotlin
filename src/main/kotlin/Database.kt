@@ -1,17 +1,18 @@
 package net.guneyilmaz0.mongos4k
 
 import com.google.gson.Gson
-import com.mongodb.BasicDBObject
-import com.mongodb.DBObject
+import com.mongodb.MongoException
 import com.mongodb.client.FindIterable
 import com.mongodb.client.MongoDatabase
 import com.mongodb.client.model.Filters
+import com.mongodb.client.model.ReplaceOptions
 import com.mongodb.client.result.InsertManyResult
 import kotlinx.coroutines.*
 import org.bson.BsonDocument
 import org.bson.BsonInt64
 import org.bson.Document
 import org.bson.conversions.Bson
+import java.util.NoSuchElementException
 
 /**
  * This class represents a MongoDB database.
@@ -27,267 +28,296 @@ open class Database {
         const val KEY_FIELD = "key"
         const val VALUE_FIELD = "value"
         val gson: Gson = Gson()
+
+        /**
+         * Converts a POJO to a MongoDB Document.
+         * If the object is a MongoSObject, it's converted via Gson.
+         * Otherwise, it's returned as is (hoping it's a type MongoDB driver can handle).
+         */
+        private fun Any.toBsonValue(): Any {
+            return if (this is MongoSObject) Document.parse(gson.toJson(this))
+            else this
+        }
     }
 
     lateinit var database: MongoDatabase
+        private set
 
     /**
      * Initializes the database with the specified MongoDB database instance.
      *
      * @param database the MongoDB database instance.
+     * @throws MongoException if there is an issue with database initialization (though unlikely with just assignment).
      */
     open fun init(database: MongoDatabase) {
-        try {
-            this.database = database
-        } catch (e: Exception) {
-            e.printStackTrace()
+        this.database = database
+    }
+
+    private fun createKeyFilter(key: Any): Bson = Filters.eq(KEY_FIELD, key)
+
+    /**
+     * Sets (upserts) a value in the specified collection with the provided key and value.
+     * If a document with the key already exists, it will be replaced. Otherwise, a new document will be inserted.
+     *
+     * @param collection The collection name.
+     * @param key The key for the value (will be used as _id or your custom key field).
+     * @param value The value to set. Can be a primitive, a custom object, or a [MongoSObject].
+     */
+    fun set(collection: String, key: Any, value: Any): Unit = set(collection, key, value, async = false)
+
+    /**
+     * Sets (upserts) a value in the specified collection with the provided key and value.
+     *
+     * @param collection The collection name.
+     * @param key The key for the value.
+     * @param value The value to set.
+     * @param async Whether the operation should be asynchronous.
+     */
+    fun set(collection: String, key: Any, value: Any, async: Boolean = false) {
+        val documentToUpsert = Document(KEY_FIELD, key)
+            .append(VALUE_FIELD, value.toBsonValue())
+
+        if (async) {
+            CoroutineScope(Dispatchers.IO).launch {
+                upsertDocumentSuspend(collection, key, documentToUpsert)
+            }
+        } else {
+            runBlocking(Dispatchers.IO) {
+                upsertDocumentSuspend(collection, key, documentToUpsert)
+            }
         }
     }
 
-    private fun createDBObject(key: Any): DBObject =
-        BasicDBObject().append(KEY_FIELD, key)
-
     /**
-     * Sets a value in the specified collection with the provided key and value.
+     * Suspended method to upsert a document in the specified collection.
+     * Replaces the document if it exists, otherwise inserts a new one.
      *
-     * @param collection the collection name.
-     * @param key the key for the value.
-     * @param value the value to set.
+     * @param collection The collection name.
+     * @param key The key for the document.
+     * @param document The document to upsert.
      */
-    fun set(collection: String, key: Any, value: Any) = set(collection, key, value, false)
-
-    /**
-     * Sets a value in the specified collection with the provided key and value.
-     *
-     * @param collection the collection name.
-     * @param key the key for the value.
-     * @param value the value to set.
-     * @param async whether the operation should be asynchronous.
-     */
-    fun set(collection: String, key: Any, value: Any, async: Boolean = false) {
-        val keyDocument = Document(KEY_FIELD, key)
-        val finalDocument =
-            keyDocument.append(VALUE_FIELD, if (value is MongoSObject) convertDocument(value) else value)
-        setFinal(collection, key, finalDocument, async)
+    private suspend fun upsertDocumentSuspend(collection: String, key: Any, document: Document) = coroutineScope {
+        database.getCollection(collection).replaceOne(createKeyFilter(key), document, ReplaceOptions().upsert(true))
     }
 
     /**
-     * Final method to set a document in the specified collection with the provided key and document.
+     * Inserts multiple documents into the specified collection.
+     * This operation is performed asynchronously.
      *
-     * @param collection the collection name.
-     * @param key the key for the document.
-     * @param document the document to set.
-     * @param async whether the operation should be asynchronous.
+     * @param collection The collection name.
+     * @param documents The list of documents to insert. Each document should ideally have a [KEY_FIELD].
+     * @return The result of the insert many operation.
      */
-    fun setFinal(collection: String, key: Any, document: Document, async: Boolean = false) {
-        if (async) CoroutineScope(Dispatchers.IO).launch { setFinalSuspend(collection, key, document) }
-        else runBlocking(Dispatchers.IO) { setFinalSuspend(collection, key, document) }
-    }
-
-    /**
-     * Suspended method to set a document in the specified collection with the provided key and document asynchronously.
-     *
-     * @param collection the collection name.
-     * @param key the key for the document.
-     * @param document the document to set.
-     */
-    private suspend fun setFinalSuspend(collection: String, key: Any, document: Document) = coroutineScope {
-        val removed = remove(collection, key)
-        removed?.let { document[KEY_FIELD] = it[KEY_FIELD] }
-        database.getCollection(collection).insertOne(document)
-    }
-
-    /**
-     * Sets multiple documents in the specified collection.
-     *
-     * @param collection the collection name.
-     * @param documents the list of documents to set.
-     * @return the result of the operation.
-     */
-    suspend fun setMany(collection: String, documents: List<Document>): InsertManyResult = coroutineScope {
+    suspend fun insertMany(collection: String, documents: List<Document>): InsertManyResult = coroutineScope {
         database.getCollection(collection).insertMany(documents)
     }
+
 
     /**
      * Removes a document from the specified collection with the provided key.
      *
-     * @param collection the collection name.
-     * @param key the key for the document.
-     * @return the removed document.
+     * @param collection The collection name.
+     * @param key The key for the document.
+     * @return The removed document, or null if no document was found and deleted.
      */
     fun remove(collection: String, key: Any): Document? =
-        database.getCollection(collection).findOneAndDelete(createDBObject(key) as Bson)
+        database.getCollection(collection).findOneAndDelete(createKeyFilter(key))
 
     /**
      * Checks if a document exists in the specified collection with the provided key.
-     * Supports CaseInsensitiveString for key matching.
      *
-     * @param collection the collection name.
-     * @param key the key for the document.
-     * @return true if the document exists, false otherwise.
+     * @param collection The collection name.
+     * @param key The key for the document.
+     * @return True if the document exists, false otherwise.
      */
     fun exists(collection: String, key: Any): Boolean =
-        database.getCollection(collection).find(createDBObject(key) as Bson).first() != null
+        database.getCollection(collection).countDocuments(createKeyFilter(key)) > 0
+
 
     /**
-     * Gets all keys in the specified collection.
+     * Gets all keys ([KEY_FIELD]) in the specified collection.
      *
-     * @param collection the collection name.
-     * @return a list of keys.
+     * @param collection The collection name.
+     * @return A list of keys. Note: This can be inefficient for very large collections.
      */
     fun getKeys(collection: String): List<String> =
         database.getCollection(collection).find().map { it[KEY_FIELD].toString() }.toList()
 
-    /**
-     * Gets all documents in the specified collection as a map.
-     *
-     * @param collection the collection name.
-     * @return a map of keys and values.
-     */
-    fun getAll(collection: String): Map<String, Any> =
-        database.getCollection(collection).find().associate { it[KEY_FIELD].toString() to it[VALUE_FIELD]!! }
 
     /**
-     * Gets filtered documents in the specified collection as a map.
-     *
-     * @param collection the collection name.
-     * @param filters a map where each entry represents key1 -> key2 pairs to filter.
-     * @return a map of keys and values matching the filters.
-     */
-    fun getAll(collection: String, filters: Map<String, String>): Map<String, Any> =
-        database.getCollection(collection)
-            .find(Filters.and(filters.map { Filters.eq(it.key, it.value) }))
-            .associate { it[KEY_FIELD].toString() to it[VALUE_FIELD]!! }
-
-    /**
-     * Retrieves a value from the specified collection with the provided key.
-     *
-     * @param T The type of the value to retrieve.
-     * @param collection The name of the collection.
-     * @param key The key for the value.
-     * @return The value of the specified type, or null if not found.
-     */
-    inline fun <reified T> get(collection: String, key: Any): T? {
-        return get(collection, key, null)
-    }
-
-    /**
-     * Retrieves a value from the specified collection with the provided key.
-     * If the key does not exist, returns the provided default value or throws an exception.
-     *
-     * @param T The type of the value to retrieve.
-     * @param collection The name of the collection.
-     * @param key The key for the value.
-     * @param defaultValue The default value to return if the key does not exist. Defaults to null.
-     * @return The value of the specified type, or the default value if not found.
-     * @throws NoSuchElementException If the key does not exist and no default value is provided.
-     */
-    inline fun <reified T> get(collection: String, key: Any, defaultValue: T? = null): T? {
-        val document = getDocument(collection, key)
-            ?: return defaultValue ?: throw NoSuchElementException(
-                "No document found in collection '$collection' with key '$key'."
-            )
-
-        return if (MongoSObject::class.java.isAssignableFrom(T::class.java))
-            documentToObject(document, T::class.java)
-        else document[VALUE_FIELD] as? T
-    }
-
-    /**
-     * Converts a Document to an object of the specified type.
-     *
-     * @param T The type of the object to convert to.
-     * @param document The Document to convert.
-     * @param classOff The class type of the object.
-     * @return The object of the specified type.
-     */
-    fun <T> documentToObject(document: Document, classOff: Class<T>): T? {
-        val value = document["value"]
-        val json = Gson().toJson(value)
-        return Gson().fromJson(json, classOff)
-    }
-
-    /**
-     * Retrieves a list of objects from a collection based on a specified key, key name, and value.
+     * Retrieves all documents from the specified collection, converting them to the specified type [T].
      *
      * @param T The type of objects to retrieve.
      * @param collection The name of the collection.
-     * @param key The value of the key to filter by.
-     * @param classOff The class type of the objects to retrieve.
-     * @return A list of objects of the specified type, or null if the key does not exist in the collection.
+     * @param filters A map where each entry represents field -> value pairs to filter by.
+     * @return A list of objects of the specified type [T].
      */
-    fun <T> getList(collection: String, key: Any, classOff: Class<T>): List<T>? {
-        if (this.exists(collection, key)) {
-            val doc = this.getDocument(collection, key)
-            return doc!!.getList(VALUE_FIELD, classOff)
-        } else return null
+    inline fun <reified T : Any> getAllList(collection: String, filters: Map<String, Any> = emptyMap()): List<T> {
+        val bsonFilters = filters.map { Filters.eq(it.key, it.value) }
+        val finalFilter = if (bsonFilters.isEmpty()) BsonDocument() else Filters.and(bsonFilters)
+
+        return database.getCollection(collection)
+            .find(finalFilter)
+            .mapNotNull { documentToTargetType<T>(it) }
+            .toList()
     }
 
     /**
-     * Gets a document from the specified collection with the provided key.
+     * Retrieves all documents from the specified collection as a map of [KEY_FIELD] to objects of type [T].
      *
-     * @param collection the collection name.
-     * @param key the key for the document.
-     * @return the document.
+     * @param T The type of objects to retrieve.
+     * @param collection The name of the collection.
+     * @param filters A map where each entry represents field -> value pairs to filter by.
+     * @return A map where keys are from [KEY_FIELD] and values are objects of type [T].
+     */
+    inline fun <reified T : Any> getAllMap(collection: String, filters: Map<String, Any> = emptyMap()): Map<String, T> {
+        val bsonFilters = filters.map { Filters.eq(it.key, it.value) }
+        val finalFilter = if (bsonFilters.isEmpty()) BsonDocument() else Filters.and(bsonFilters)
+
+        val results = mutableMapOf<String, T>()
+        database.getCollection(collection)
+            .find(finalFilter)
+            .forEach { doc ->
+                val key = doc[KEY_FIELD]?.toString()
+                val value = documentToTargetType<T>(doc)
+                if (key != null && value != null) {
+                    results[key] = value
+                }
+            }
+        return results
+    }
+
+
+    /**
+     * Retrieves a value from the specified collection with the provided key.
+     *
+     * @param T The type of the value to retrieve. Must be a non-nullable type.
+     * @param collection The name of the collection.
+     * @param key The key for the value.
+     * @param defaultValue The default value to return if the key does not exist.
+     * @return The value of the specified type [T], or [defaultValue] if not found.
+     * @throws NoSuchElementException If the key does not exist and no [defaultValue] is provided.
+     */
+    inline fun <reified T : Any> get(collection: String, key: Any, defaultValue: T? = null): T {
+        val document = getDocument(collection, key)
+        return if (document != null) {
+            documentToTargetType<T>(document) ?: defaultValue ?: throw NoSuchElementException(
+                "No document found in collection '$collection' with key '$key', and stored value is not convertible to ${T::class.java.name} or is null."
+            )
+        } else {
+            defaultValue ?: throw NoSuchElementException(
+                "No document found in collection '$collection' with key '$key'."
+            )
+        }
+    }
+
+    /**
+     * Helper function to convert a Document's VALUE_FIELD to the target type T.
+     */
+    inline fun <reified T : Any> documentToTargetType(document: Document): T? {
+        val valuePart = document[VALUE_FIELD] ?: return null
+
+        return when {
+            T::class.java.isAssignableFrom(valuePart::class.java) -> valuePart as T
+            MongoSObject::class.java.isAssignableFrom(T::class.java) -> {
+                val valueDoc = valuePart as? Document ?: Document.parse(gson.toJson(valuePart))
+                gson.fromJson(valueDoc.toJson(), T::class.java)
+            }
+
+            valuePart is T -> valuePart
+            else -> {
+                try {
+                    gson.fromJson(gson.toJsonTree(valuePart), T::class.java)
+                } catch (e: Exception) {
+                    System.err.println("Failed to convert value to ${T::class.java.name}: $e")
+                    null
+                }
+            }
+        }
+    }
+
+    /**
+     * Gets a single document from the specified collection with the provided key.
+     *
+     * @param collection The collection name.
+     * @param key The key for the document.
+     * @return The [Document] if found, otherwise null.
      */
     fun getDocument(collection: String, key: Any): Document? =
-        database.getCollection(collection).find(createDBObject(key) as Bson).first()
+        database.getCollection(collection).find(createKeyFilter(key)).firstOrNull()
 
     /**
      * Retrieves documents from a collection that match the specified key.
      *
      * @param collection The name of the collection.
      * @param key The value of the key to filter by.
-     * @return A `FindIterable<Document>` containing the documents that match the criteria.
+     * @return A [FindIterable<Document>] containing the documents that match the criteria.
      */
     fun getDocuments(collection: String, key: Any): FindIterable<Document> =
-        database.getCollection(collection).find(createDBObject(key) as Bson)
+        database.getCollection(collection).find(createKeyFilter(key))
+
 
     /**
      * Retrieves documents from a collection as a list that match the specified key.
      *
      * @param collection The name of the collection.
      * @param key The value of the key to filter by.
-     * @return An `List<Document>` containing the documents that match the criteria.
+     * @return An [List<Document>] containing the documents that match the criteria.
      */
     fun getDocumentsAsList(collection: String, key: Any): List<Document> =
-        database.getCollection(collection).find(createDBObject(key) as Bson).toList()
+        getDocuments(collection, key).toList()
+
 
     /**
-     * Gets an iterable of documents from the specified collection with the provided key.
+     * Converts a [MongoSObject] to a [Document] for storing in MongoDB.
+     * The [MongoSObject] itself becomes the content of the [VALUE_FIELD].
+     * The key should be set separately.
      *
-     * @param collection the collection name.
-     * @param key the key for the documents.
-     * @return the iterable of documents.
+     * @param mongoSObject The [MongoSObject] to convert.
+     * @return The [Document] representation, typically for the [VALUE_FIELD].
      */
-    fun getIterable(collection: String, key: Any): FindIterable<Document> =
-        database.getCollection(collection).find(createDBObject(key) as Bson)
-
-    fun convertDocument(mongoSObject: MongoSObject): Document = convertJsonToDocument(gson.toJson(mongoSObject))
+    internal fun convertMongoSObjectToDocumentValue(mongoSObject: MongoSObject): Document =
+        Document.parse(gson.toJson(mongoSObject))
 
     /**
-     * Converts a document to a JSON string.
+     * Converts any object to its [Document] representation using Gson.
+     * This is a general-purpose utility.
+     */
+    fun convertToDocument(obj: Any): Document = Document.parse(gson.toJson(obj))
+
+
+    /**
+     * Converts a [Document] to its JSON string representation.
      *
-     * @param document the document to convert.
-     * @return the JSON string.
+     * @param document The document to convert.
+     * @return The JSON string.
      */
     fun convertDocumentToJson(document: Document): String = gson.toJson(document)
 
     /**
-     * Converts a JSON string to a document.
+     * Converts a JSON string to a [Document].
      *
-     * @param json the JSON string to convert.
-     * @return the document.
+     * @param json The JSON string to convert.
+     * @return The [Document].
      */
     fun convertJsonToDocument(json: String): Document = Document.parse(json)
 
+    /**
+     * Checks if the database is connected and reachable by sending a ping command.
+     *
+     * @return True if connected and ping is successful, false otherwise.
+     */
     fun isConnected(): Boolean {
-        try {
+        return try {
             database.runCommand(BsonDocument("ping", BsonInt64(1)))
             true
+        } catch (e: MongoException) {
+            System.err.println("MongoDB connection check failed: ${e.message}")
+            false
         } catch (e: Exception) {
+            System.err.println("An unexpected error occurred during MongoDB connection check: ${e.message}")
             e.printStackTrace()
+            false
         }
-        return false
     }
 }
