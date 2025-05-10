@@ -1,4 +1,4 @@
-package net.guneyilmaz0.mongos
+package net.guneyilmaz0.mongos4k
 
 import com.google.gson.Gson
 import com.mongodb.BasicDBObject
@@ -92,7 +92,7 @@ open class Database {
      * @param document the document to set.
      */
     private suspend fun setFinalSuspend(collection: String, key: Any, document: Document) = coroutineScope {
-        val removed = removeData(collection, key)
+        val removed = remove(collection, key)
         removed?.let { document[KEY_FIELD] = it[KEY_FIELD] }
         database.getCollection(collection).insertOne(document)
     }
@@ -109,24 +109,13 @@ open class Database {
     }
 
     /**
-     * Sets a value in the specified collection with the provided key and value if the key does not already exist.
-     *
-     * @param collection the collection name.
-     * @param key the key for the value.
-     * @param value the value to set.
-     */
-    fun setIfNotExists(collection: String, key: Any, value: Any) {
-        if (!exists(collection, key)) set(collection, key, value)
-    }
-
-    /**
      * Removes a document from the specified collection with the provided key.
      *
      * @param collection the collection name.
      * @param key the key for the document.
      * @return the removed document.
      */
-    fun removeData(collection: String, key: Any): Document? =
+    fun remove(collection: String, key: Any): Document? =
         database.getCollection(collection).findOneAndDelete(createDBObject(key) as Bson)
 
     /**
@@ -169,76 +158,6 @@ open class Database {
         database.getCollection(collection)
             .find(Filters.and(filters.map { Filters.eq(it.key, it.value) }))
             .associate { it[KEY_FIELD].toString() to it[VALUE_FIELD]!! }
-
-    /**
-     * Retrieves all documents from the specified collection as a list of objects.
-     *
-     * @param T The type of objects to retrieve.
-     * @param collection The name of the collection.
-     * @return A list of objects of the specified type.
-     */
-    inline fun <reified T> getAll(collection: String): List<T> {
-        val results = mutableListOf<T>()
-        val documents = database.getCollection(collection).find().toList()
-        for (doc in documents) {
-            if (MongoSObject::class.java.isAssignableFrom(T::class.java)) {
-                val parsed = documentToObject(doc, T::class.java)
-                if (parsed != null) results.add(parsed)
-            } else {
-                (doc[VALUE_FIELD] as? T)?.let { results.add(it) }
-            }
-        }
-        return results
-    }
-
-    /**
-     * Retrieves all documents from the specified collection as a list of objects based on filters.
-     *
-     * @param T The type of objects to retrieve.
-     * @param collection The name of the collection.
-     * @param filters A map where each entry represents key1 -> key2 pairs to filter.
-     * @return A list of objects of the specified type.
-     */
-    inline fun <reified T> getAll(collection: String, filters: Map<String, String>): List<T> {
-        val results = mutableListOf<T>()
-        val queryFilters = Filters.and(filters.map { Filters.eq(it.key, it.value) })
-        val documents = database.getCollection(collection).find(queryFilters).toList()
-        for (doc in documents) {
-            if (MongoSObject::class.java.isAssignableFrom(T::class.java)) {
-                val parsed = documentToObject(doc, T::class.java)
-                if (parsed != null) results.add(parsed)
-            } else {
-                (doc[VALUE_FIELD] as? T)?.let { results.add(it) }
-            }
-        }
-        return results
-    }
-
-    /**
-     * Retrieves a value from the specified collection with the provided key.
-     * If the key does not exist, returns the provided default value or   inline fun <reified T> getAll(collection: String): List<T> {
-     *
-     *     }
-     *  throws an exception.
-     * This method is for Java compatibility.
-     *
-     * @param T The type of the value to retrieve.
-     * @param collection The name of the collection.
-     * @param key The key for the value.
-     * @return The value of the specified type, or the default value if not found.
-     * @throws NoSuchElementException If the key does not exist and no default value is provided.
-     */
-    @Suppress("UNCHECKED_CAST")
-    fun <T> get(collection: String, key: Any, clazz: Class<T>): T? {
-        val document = getDocument(collection, key)
-            ?: return null ?: throw NoSuchElementException(
-                "No document found in collection '$collection' with key '$key'."
-            )
-
-        return if (MongoSObject::class.java.isAssignableFrom(clazz))
-            documentToObject(document, clazz)
-        else document[VALUE_FIELD] as? T
-    }
 
     /**
      * Retrieves a value from the specified collection with the provided key.
@@ -344,7 +263,7 @@ open class Database {
     fun getIterable(collection: String, key: Any): FindIterable<Document> =
         database.getCollection(collection).find(createDBObject(key) as Bson)
 
-    fun convertDocument(mongoSObject: MongoSObject): Document = convertJson(gson.toJson(mongoSObject))
+    fun convertDocument(mongoSObject: MongoSObject): Document = convertJsonToDocument(gson.toJson(mongoSObject))
 
     /**
      * Converts a document to a JSON string.
@@ -352,7 +271,7 @@ open class Database {
      * @param document the document to convert.
      * @return the JSON string.
      */
-    fun convertJson(document: Document): String = gson.toJson(document)
+    fun convertDocumentToJson(document: Document): String = gson.toJson(document)
 
     /**
      * Converts a JSON string to a document.
@@ -360,14 +279,15 @@ open class Database {
      * @param json the JSON string to convert.
      * @return the document.
      */
-    fun convertJson(json: String): Document = Document.parse(json)
+    fun convertJsonToDocument(json: String): Document = Document.parse(json)
 
-    fun isConnected(): Boolean =
+    fun isConnected(): Boolean {
         try {
             database.runCommand(BsonDocument("ping", BsonInt64(1)))
             true
         } catch (e: Exception) {
             e.printStackTrace()
-            false
         }
+        return false
+    }
 }

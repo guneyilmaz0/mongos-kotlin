@@ -2,8 +2,12 @@ plugins {
     kotlin("jvm") version "2.1.20"
 }
 
-group = "net.guneyilmaz0.mongos"
-version = "1.1.2"
+kotlin {
+    jvmToolchain(21)
+}
+
+group = "net.guneyilmaz0.mongos4k"
+version = "1.1.3"
 
 repositories {
     mavenCentral()
@@ -17,10 +21,6 @@ dependencies {
     implementation("org.mongodb:bson:5.4.0")
     implementation("com.google.code.gson:gson:2.12.1")
     implementation("ch.qos.logback:logback-classic:1.5.16")
-}
-
-kotlin {
-    jvmToolchain(21)
 }
 
 tasks.withType<Jar> {

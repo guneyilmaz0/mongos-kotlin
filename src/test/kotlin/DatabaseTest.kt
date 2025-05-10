@@ -1,4 +1,4 @@
-package net.guneyilmaz0.mongos
+package net.guneyilmaz0.mongos4k
 
 import com.mongodb.client.MongoCollection
 import com.mongodb.client.MongoDatabase
@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import org.mockito.kotlin.any
+import kotlin.jvm.java
 
 class DatabaseTest {
 

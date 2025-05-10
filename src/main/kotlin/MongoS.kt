@@ -1,4 +1,4 @@
-package net.guneyilmaz0.mongos
+package net.guneyilmaz0.mongos4k
 
 import com.mongodb.client.MongoClient
 import com.mongodb.client.MongoClients

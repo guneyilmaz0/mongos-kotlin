@@ -29,7 +29,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'com.github.guneyilmaz0:MongoS:VERSION'
+    implementation 'com.github.guneyilmaz0:mongos-kotlin:VERSION'
 }
 ```
 
@@ -45,7 +45,7 @@ Add the dependency to your `pom.xml` file:
 
 <dependency>
     <groupId>com.github.guneyilmaz0</groupId>
-    <artifactId>MongoS</artifactId>
+    <artifactId>mongos-kotlin</artifactId>
     <version>VERSION</version>
 </dependency>
 ```

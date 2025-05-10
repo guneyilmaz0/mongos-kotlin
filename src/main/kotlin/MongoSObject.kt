@@ -1,4 +1,4 @@
-package net.guneyilmaz0.mongos
+package net.guneyilmaz0.mongos4k
 
 /**
  * Abstract base class for MongoDB-related objects.
