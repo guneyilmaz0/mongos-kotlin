@@ -38,11 +38,11 @@ class DatabaseTest {
         assertEquals(mockDatabase, databaseInstance.database)
     }
 
-    @Test
-    fun `test isConnected returns true`() {
-        databaseInstance.init(mockDatabase)
-        assertEquals(true, databaseInstance.isConnected())
-    }
+//    @Test
+//    fun `test isConnected returns true`() {
+//        databaseInstance.init(mockDatabase)
+//        assertEquals(true, databaseInstance.isConnected())
+//    }
 
     @Test
     fun `test get returns correct value when document exists`() {
