@@ -52,23 +52,6 @@ Add the dependency to your `pom.xml` file:
 
 ## Quick Start
 
- - Java
-```java
-    // Initialize and connect to MongoDB
-    MongoS db = new MongoS("myDatabase");
-    
-    // Store data
-    db.set("users", "user123", new User("John Doe", 25));
-    
-    // Retrieve data
-    User user = db.get("users", "user123", User.class);
-    
-    // Check if document exists
-    boolean exists = db.exists("users", "user123");
-    
-    // Retrieve a list of objects
-    List<User> allUsers = db.getList("users", "userList", User.class);
-```
 - Kotlin
 ```kotlin
     // Initialize and connect to MongoDB
@@ -91,12 +74,11 @@ Add the dependency to your `pom.xml` file:
 
 ### Database Class Methods
 
-| Method                             | Description                                          |
-|------------------------------------|------------------------------------------------------|
-| `isConnected()`                    | Checks if connected to the database                  |
-| `get(collection, id)`              | Retrieves a document as a raw object                 |
-| `getList(collection, class)`       | Retrieves all documents in a collection as objects   |
-| `set(collection, id, object)`      | Stores an object in the specified collection         |
+| Method                        | Description                                          |
+|-------------------------------|------------------------------------------------------|
+| `isConnected()`               | Checks if connected to the database                  |
+| `get<T>(collection, id)`      | Retrieves a document as a raw object                 |
+| `set(collection, id, object)` | Stores an object in the specified collection         |
 
 ## Building from Source
 
