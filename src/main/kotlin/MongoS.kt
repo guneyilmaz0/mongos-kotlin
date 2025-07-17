@@ -12,6 +12,8 @@ import net.guneyilmaz0.mongos4k.exceptions.MongoSConnectionException
 import net.guneyilmaz0.mongos4k.operations.MongoSBatchOperations
 import net.guneyilmaz0.mongos4k.operations.MongoSIndexManager
 import net.guneyilmaz0.mongos4k.operations.MongoSTransactionManager
+import net.guneyilmaz0.mongos4k.monitoring.MongoSPerformanceMonitor
+import net.guneyilmaz0.mongos4k.utilities.MongoSBackupUtility
 import net.guneyilmaz0.mongos4k.validation.MongoSValidator
 import org.bson.Document
 
@@ -33,6 +35,8 @@ class MongoS : Database {
     val batchOperations: MongoSBatchOperations by lazy { MongoSBatchOperations.create(this) }
     val indexManager: MongoSIndexManager by lazy { MongoSIndexManager.create(this) }
     val transactionManager: MongoSTransactionManager by lazy { MongoSTransactionManager.create(this) }
+    val performanceMonitor: MongoSPerformanceMonitor by lazy { MongoSPerformanceMonitor.create(this) }
+    val backupUtility: MongoSBackupUtility by lazy { MongoSBackupUtility.create(this) }
 
     /**
      * Initializes a new instance of the MongoS class with the specified host, port, and database name.

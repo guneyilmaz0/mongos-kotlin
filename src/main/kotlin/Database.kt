@@ -12,6 +12,7 @@ import net.guneyilmaz0.mongos4k.exceptions.MongoSOperationException
 import net.guneyilmaz0.mongos4k.exceptions.MongoSSerializationException
 import net.guneyilmaz0.mongos4k.exceptions.MongoSNotFoundException
 import net.guneyilmaz0.mongos4k.query.MongoSQueryBuilder
+import net.guneyilmaz0.mongos4k.aggregation.MongoSAggregationBuilder
 import net.guneyilmaz0.mongos4k.validation.MongoSValidator
 import org.bson.BsonDocument
 import org.bson.BsonInt64
@@ -316,6 +317,43 @@ open class Database {
             database.getCollection(collection).countDocuments(filter)
         } catch (e: Exception) {
             throw MongoSOperationException("Failed to count documents in collection '$collection'", e)
+        }
+    }
+
+    /**
+     * Executes an aggregation pipeline using a builder.
+     *
+     * @param collection The collection name.
+     * @param aggregationBuilder The aggregation builder to use.
+     * @return A list of documents from the aggregation result.
+     * @throws MongoSOperationException If the operation fails.
+     */
+    fun aggregate(collection: String, aggregationBuilder: MongoSAggregationBuilder): List<Document> {
+        MongoSValidator.validateCollectionName(collection)
+        
+        return try {
+            aggregationBuilder.executeToList(this, collection)
+        } catch (e: Exception) {
+            throw MongoSOperationException("Failed to execute aggregation pipeline", e)
+        }
+    }
+
+    /**
+     * Executes an aggregation pipeline and converts results to the specified type.
+     *
+     * @param T The type to convert results to.
+     * @param collection The collection name.
+     * @param aggregationBuilder The aggregation builder to use.
+     * @return A list of objects of the specified type.
+     * @throws MongoSOperationException If the operation fails.
+     */
+    inline fun <reified T : Any> aggregateAs(collection: String, aggregationBuilder: MongoSAggregationBuilder): List<T> {
+        MongoSValidator.validateCollectionName(collection)
+        
+        return try {
+            aggregationBuilder.executeAs<T>(this, collection)
+        } catch (e: Exception) {
+            throw MongoSOperationException("Failed to execute aggregation pipeline with type conversion", e)
         }
     }
 
