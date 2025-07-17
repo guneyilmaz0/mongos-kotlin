@@ -8,6 +8,11 @@ import com.mongodb.client.model.Filters
 import com.mongodb.client.model.ReplaceOptions
 import com.mongodb.client.result.InsertManyResult
 import kotlinx.coroutines.*
+import net.guneyilmaz0.mongos4k.exceptions.MongoSOperationException
+import net.guneyilmaz0.mongos4k.exceptions.MongoSSerializationException
+import net.guneyilmaz0.mongos4k.exceptions.MongoSNotFoundException
+import net.guneyilmaz0.mongos4k.query.MongoSQueryBuilder
+import net.guneyilmaz0.mongos4k.validation.MongoSValidator
 import org.bson.BsonDocument
 import org.bson.BsonInt64
 import org.bson.Document
@@ -62,6 +67,7 @@ open class Database {
      * @param collection The collection name.
      * @param key The key for the value (will be used as _id or your custom key field).
      * @param value The value to set. Can be a primitive, a custom object, or a [MongoSObject].
+     * @throws MongoSOperationException If the operation fails.
      */
     fun set(collection: String, key: Any, value: Any): Unit = set(collection, key, value, async = false)
 
@@ -72,8 +78,13 @@ open class Database {
      * @param key The key for the value.
      * @param value The value to set.
      * @param async Whether the operation should be asynchronous.
+     * @throws MongoSOperationException If the operation fails.
      */
     fun set(collection: String, key: Any, value: Any, async: Boolean = false) {
+        MongoSValidator.validateCollectionName(collection)
+        MongoSValidator.validateKey(key)
+        MongoSValidator.validateValue(value)
+        
         val documentToUpsert = Document(KEY_FIELD, key)
             .append(VALUE_FIELD, value.toBsonValue())
 
@@ -95,9 +106,14 @@ open class Database {
      * @param collection The collection name.
      * @param key The key for the document.
      * @param document The document to upsert.
+     * @throws MongoSOperationException If the operation fails.
      */
     private suspend fun upsertDocumentSuspend(collection: String, key: Any, document: Document) = coroutineScope {
-        database.getCollection(collection).replaceOne(createKeyFilter(key), document, ReplaceOptions().upsert(true))
+        try {
+            database.getCollection(collection).replaceOne(createKeyFilter(key), document, ReplaceOptions().upsert(true))
+        } catch (e: Exception) {
+            throw MongoSOperationException("Failed to upsert document with key '$key' in collection '$collection'", e)
+        }
     }
 
     /**
@@ -196,18 +212,110 @@ open class Database {
      * @param key The key for the value.
      * @param defaultValue The default value to return if the key does not exist.
      * @return The value of the specified type [T], or [defaultValue] if not found.
-     * @throws NoSuchElementException If the key does not exist and no [defaultValue] is provided.
+     * @throws MongoSNotFoundException If the key does not exist and no [defaultValue] is provided.
+     * @throws MongoSSerializationException If the value cannot be converted to the specified type.
      */
     inline fun <reified T : Any> get(collection: String, key: Any, defaultValue: T? = null): T {
+        MongoSValidator.validateCollectionName(collection)
+        MongoSValidator.validateKey(key)
+        
         val document = getDocument(collection, key)
         return if (document != null) {
-            documentToTargetType<T>(document) ?: defaultValue ?: throw NoSuchElementException(
+            documentToTargetType<T>(document) ?: defaultValue ?: throw MongoSNotFoundException(
                 "No document found in collection '$collection' with key '$key', and stored value is not convertible to ${T::class.java.name} or is null."
             )
         } else {
-            defaultValue ?: throw NoSuchElementException(
+            defaultValue ?: throw MongoSNotFoundException(
                 "No document found in collection '$collection' with key '$key'."
             )
+        }
+    }
+
+    /**
+     * Finds documents using a query builder.
+     *
+     * @param T The type of objects to retrieve.
+     * @param collection The collection name.
+     * @param queryBuilder The query builder to use.
+     * @return A list of objects matching the query.
+     * @throws MongoSOperationException If the operation fails.
+     */
+    inline fun <reified T : Any> find(collection: String, queryBuilder: MongoSQueryBuilder): List<T> {
+        MongoSValidator.validateCollectionName(collection)
+        
+        return try {
+            val mongoCollection = database.getCollection(collection)
+            var findIterable = mongoCollection.find(queryBuilder.buildFilter() ?: BsonDocument())
+            
+            queryBuilder.buildSort()?.let { findIterable = findIterable.sort(it) }
+            queryBuilder.getSkip()?.let { findIterable = findIterable.skip(it) }
+            queryBuilder.getLimit()?.let { findIterable = findIterable.limit(it) }
+            
+            findIterable.mapNotNull { documentToTargetType<T>(it) }.toList()
+        } catch (e: Exception) {
+            throw MongoSOperationException("Failed to find documents in collection '$collection'", e)
+        }
+    }
+
+    /**
+     * Finds documents using a query builder with pagination support.
+     *
+     * @param T The type of objects to retrieve.
+     * @param collection The collection name.
+     * @param queryBuilder The query builder to use.
+     * @param page The page number (1-based).
+     * @param pageSize The number of items per page.
+     * @return A paginated result containing the documents and pagination info.
+     * @throws MongoSOperationException If the operation fails.
+     */
+    inline fun <reified T : Any> findPaginated(
+        collection: String,
+        queryBuilder: MongoSQueryBuilder,
+        page: Int,
+        pageSize: Int
+    ): PaginatedResult<T> {
+        MongoSValidator.validateCollectionName(collection)
+        MongoSValidator.validatePagination(page, pageSize)
+        
+        return try {
+            val mongoCollection = database.getCollection(collection)
+            val filter = queryBuilder.buildFilter() ?: BsonDocument()
+            
+            // Get total count
+            val totalCount = mongoCollection.countDocuments(filter)
+            
+            // Get paginated results
+            val paginatedQuery = queryBuilder.paginate(page, pageSize)
+            val documents = find<T>(collection, paginatedQuery)
+            
+            PaginatedResult(
+                items = documents,
+                totalCount = totalCount,
+                page = page,
+                pageSize = pageSize,
+                totalPages = ((totalCount + pageSize - 1) / pageSize).toInt()
+            )
+        } catch (e: Exception) {
+            throw MongoSOperationException("Failed to find paginated documents in collection '$collection'", e)
+        }
+    }
+
+    /**
+     * Counts documents matching a query.
+     *
+     * @param collection The collection name.
+     * @param queryBuilder The query builder to use.
+     * @return The count of matching documents.
+     * @throws MongoSOperationException If the operation fails.
+     */
+    fun count(collection: String, queryBuilder: MongoSQueryBuilder): Long {
+        MongoSValidator.validateCollectionName(collection)
+        
+        return try {
+            val filter = queryBuilder.buildFilter() ?: BsonDocument()
+            database.getCollection(collection).countDocuments(filter)
+        } catch (e: Exception) {
+            throw MongoSOperationException("Failed to count documents in collection '$collection'", e)
         }
     }
 
@@ -220,8 +328,12 @@ open class Database {
         return when {
             T::class.java.isAssignableFrom(valuePart::class.java) -> valuePart as T
             MongoSObject::class.java.isAssignableFrom(T::class.java) -> {
-                val valueDoc = valuePart as? Document ?: Document.parse(gson.toJson(valuePart))
-                gson.fromJson(valueDoc.toJson(), T::class.java)
+                try {
+                    val valueDoc = valuePart as? Document ?: Document.parse(gson.toJson(valuePart))
+                    gson.fromJson(valueDoc.toJson(), T::class.java)
+                } catch (e: Exception) {
+                    throw MongoSSerializationException("Failed to deserialize MongoSObject to ${T::class.java.name}", e)
+                }
             }
 
             valuePart is T -> valuePart
@@ -229,8 +341,7 @@ open class Database {
                 try {
                     gson.fromJson(gson.toJsonTree(valuePart), T::class.java)
                 } catch (e: Exception) {
-                    System.err.println("Failed to convert value to ${T::class.java.name}: $e")
-                    null
+                    throw MongoSSerializationException("Failed to convert value to ${T::class.java.name}", e)
                 }
             }
         }
@@ -320,4 +431,42 @@ open class Database {
             false
         }
     }
+}
+
+/**
+ * Data class representing paginated results.
+ *
+ * @param T The type of items in the result.
+ * @param items The items in the current page.
+ * @param totalCount The total number of items across all pages.
+ * @param page The current page number (1-based).
+ * @param pageSize The number of items per page.
+ * @param totalPages The total number of pages.
+ */
+data class PaginatedResult<T>(
+    val items: List<T>,
+    val totalCount: Long,
+    val page: Int,
+    val pageSize: Int,
+    val totalPages: Int
+) {
+    /**
+     * Whether there is a next page.
+     */
+    val hasNextPage: Boolean = page < totalPages
+    
+    /**
+     * Whether there is a previous page.
+     */
+    val hasPreviousPage: Boolean = page > 1
+    
+    /**
+     * The next page number or null if there is no next page.
+     */
+    val nextPage: Int? = if (hasNextPage) page + 1 else null
+    
+    /**
+     * The previous page number or null if there is no previous page.
+     */
+    val previousPage: Int? = if (hasPreviousPage) page - 1 else null
 }
