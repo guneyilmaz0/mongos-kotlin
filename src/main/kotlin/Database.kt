@@ -152,7 +152,7 @@ open class Database {
      * @param filters A map where each entry represents field -> value pairs to filter by.
      * @return A list of objects of the specified type [T].
      */
-    inline fun <reified T : Any> getAllList(collection: String, filters: Map<String, Any> = emptyMap()): List<T> {
+    inline fun <reified T : Any> getAllList(collection: String, filters: Map<String, Any> = emptyMap()): List<T?>? {
         val bsonFilters = filters.map { Filters.eq(it.key, it.value) }
         val finalFilter = if (bsonFilters.isEmpty()) BsonDocument() else Filters.and(bsonFilters)
 
@@ -170,7 +170,7 @@ open class Database {
      * @param filters A map where each entry represents field -> value pairs to filter by.
      * @return A map where keys are from [KEY_FIELD] and values are objects of type [T].
      */
-    inline fun <reified T : Any> getAllMap(collection: String, filters: Map<String, Any> = emptyMap()): Map<String, T> {
+    inline fun <reified T : Any> getAllMap(collection: String, filters: Map<String, Any> = emptyMap()): Map<String, T?>? {
         val bsonFilters = filters.map { Filters.eq(it.key, it.value) }
         val finalFilter = if (bsonFilters.isEmpty()) BsonDocument() else Filters.and(bsonFilters)
 
@@ -198,7 +198,7 @@ open class Database {
      * @return The value of the specified type [T], or [defaultValue] if not found.
      * @throws NoSuchElementException If the key does not exist and no [defaultValue] is provided.
      */
-    inline fun <reified T : Any> get(collection: String, key: Any, defaultValue: T? = null): T {
+    inline fun <reified T : Any> get(collection: String, key: Any, defaultValue: T? = null): T? {
         val document = getDocument(collection, key)
         return if (document != null) {
             documentToTargetType<T>(document) ?: defaultValue ?: throw NoSuchElementException(
