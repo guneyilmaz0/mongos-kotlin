@@ -195,20 +195,12 @@ open class Database {
      * @param collection The name of the collection.
      * @param key The key for the value.
      * @param defaultValue The default value to return if the key does not exist.
-     * @return The value of the specified type [T], or [defaultValue] if not found.
-     * @throws NoSuchElementException If the key does not exist and no [defaultValue] is provided.
+     * @return The value of the specified type [T], or [defaultValue] if not found. If no value is found and no defaultValue is provided, returns null.
      */
     inline fun <reified T : Any> get(collection: String, key: Any, defaultValue: T? = null): T? {
         val document = getDocument(collection, key)
-        return if (document != null) {
-            documentToTargetType<T>(document) ?: defaultValue ?: throw NoSuchElementException(
-                "No document found in collection '$collection' with key '$key', and stored value is not convertible to ${T::class.java.name} or is null."
-            )
-        } else {
-            defaultValue ?: throw NoSuchElementException(
-                "No document found in collection '$collection' with key '$key'."
-            )
-        }
+        return if (document != null) documentToTargetType<T>(document) ?: defaultValue
+        else defaultValue
     }
 
     /**
