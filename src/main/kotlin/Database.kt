@@ -14,7 +14,6 @@ import org.bson.Document
 import org.bson.conversions.Bson
 import org.bson.json.JsonWriterSettings
 import java.io.File
-import java.util.NoSuchElementException
 
 /**
  * This class represents a MongoDB database.
