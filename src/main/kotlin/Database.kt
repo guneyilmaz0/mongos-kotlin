@@ -12,6 +12,8 @@ import org.bson.BsonDocument
 import org.bson.BsonInt64
 import org.bson.Document
 import org.bson.conversions.Bson
+import org.bson.json.JsonWriterSettings
+import java.io.File
 import java.util.NoSuchElementException
 
 /**
@@ -293,6 +295,51 @@ open class Database {
      * @return The [Document].
      */
     fun convertJsonToDocument(json: String): Document = Document.parse(json)
+
+    /**
+     * Saves all documents in the given collection to a JSON file in MongoDB Extended JSON format,
+     * perfectly matching the pretty-printed output of MongoDB Compass.
+     * The file will be named after the collection (e.g., "users.json") and saved to the specified path.
+     *
+     * @param collection The name of the collection to save.
+     * @param path The directory path where the JSON file should be saved.
+     * @return The [File] object where the data was saved, or null if an error occurred.
+     */
+    fun saveAsJson(collection: String, path: String): File? {
+        try {
+            val directory = File(path)
+            if (!directory.exists()) directory.mkdirs()
+
+            val documents = database.getCollection(collection).find()
+            val file = File(directory, "${database.name}.$collection.json")
+
+            val prettyPrintSettings = JsonWriterSettings.builder().indent(true).build()
+
+            file.bufferedWriter().use { writer ->
+                writer.write("[\n")
+
+                val iterator = documents.iterator()
+                while (iterator.hasNext()) {
+                    val doc = iterator.next()
+                    val documentJson = doc.toJson(prettyPrintSettings)
+
+                    writer.write(documentJson)
+
+                    if (iterator.hasNext()) {
+                        writer.write(",")
+                    }
+                    writer.newLine()
+                }
+
+                writer.write("]\n")
+            }
+            return file
+        } catch (e: Exception) {
+            System.err.println("Failed to save collection '${database.name}.$collection' as JSON: ${e.message}}")
+            e.printStackTrace()
+            return null
+        }
+    }
 
     /**
      * Checks if the database is connected and reachable by sending a ping command.
