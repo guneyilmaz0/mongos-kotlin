@@ -113,7 +113,6 @@ open class Database {
         database.getCollection(collection).insertMany(documents)
     }
 
-
     /**
      * Removes a document from the specified collection with the provided key.
      *
@@ -148,7 +147,6 @@ open class Database {
      */
     fun getKeys(collection: String): List<String> =
         database.getCollection(collection).find().map { it[KEY_FIELD].toString() }.toList()
-
 
     /**
      * Retrieves all documents from the specified collection, converting them to the specified type [T].
@@ -192,7 +190,6 @@ open class Database {
             }
         return results
     }
-
 
     /**
      * Retrieves a value from the specified collection with the provided key.
@@ -253,7 +250,6 @@ open class Database {
      */
     fun getDocuments(collection: String, key: Any): FindIterable<Document> =
         database.getCollection(collection).find(createKeyFilter(key))
-
 
     /**
      * Retrieves documents from a collection as a list that match the specified key.

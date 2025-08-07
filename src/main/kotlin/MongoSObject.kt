@@ -11,6 +11,7 @@ import org.bson.Document
  *
  * @author guneyilmaz0
  */
+@Suppress("unused")
 abstract class MongoSObject {
 
     /**
