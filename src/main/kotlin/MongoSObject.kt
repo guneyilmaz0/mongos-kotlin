@@ -1,5 +1,8 @@
 package net.guneyilmaz0.mongos4k
 
+import com.google.gson.Gson
+import org.bson.Document
+
 /**
  * Abstract base class for MongoDB-related objects.
  * This class can be extended to define specific MongoDB object behaviors.
@@ -8,4 +11,15 @@ package net.guneyilmaz0.mongos4k
  *
  * @author guneyilmaz0
  */
-abstract class MongoSObject
+abstract class MongoSObject {
+
+    /**
+     * Converts the object to a JSON string representation.
+     * This method uses Gson to serialize the object into JSON format.
+     *
+     * @return A JSON string representing the object.
+     */
+    fun toJson(): String = Gson().toJson(this)
+
+    fun toDocument(): Document = Document.parse(toJson())
+}
