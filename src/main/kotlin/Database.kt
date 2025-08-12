@@ -36,7 +36,7 @@ open class Database {
          * Otherwise, it's returned as is (hoping it's a type MongoDB driver can handle).
          */
         private fun Any.toBsonValue(): Any {
-            return if (this is MongoSObject) this.toJson()
+            return if (this is MongoSObject) Document.parse(gson.toJson(this))
             else this
         }
     }
@@ -156,7 +156,7 @@ open class Database {
      * @param filters A map where each entry represents field -> value pairs to filter by.
      * @return A list of objects of the specified type [T].
      */
-    inline fun <reified T : Any> getAllList(collection: String, filters: Map<String, Any> = emptyMap()): List<T>? {
+    inline fun <reified T : Any> getAllList(collection: String, filters: Map<String, Any> = emptyMap()): List<T> {
         val bsonFilters = filters.map { Filters.eq(it.key, it.value) }
         val finalFilter = if (bsonFilters.isEmpty()) BsonDocument() else Filters.and(bsonFilters)
 
@@ -174,7 +174,7 @@ open class Database {
      * @param filters A map where each entry represents field -> value pairs to filter by.
      * @return A map where keys are from [KEY_FIELD] and values are objects of type [T].
      */
-    inline fun <reified T : Any> getAllMap(collection: String, filters: Map<String, Any> = emptyMap()): Map<String, T>? {
+    inline fun <reified T : Any> getAllMap(collection: String, filters: Map<String, Any> = emptyMap()): Map<String, T> {
         val bsonFilters = filters.map { Filters.eq(it.key, it.value) }
         val finalFilter = if (bsonFilters.isEmpty()) BsonDocument() else Filters.and(bsonFilters)
 
@@ -260,6 +260,41 @@ open class Database {
      */
     fun getDocumentsAsList(collection: String, key: Any): List<Document> =
         getDocuments(collection, key).toList()
+
+
+    /**
+     * Converts a [MongoSObject] to a [Document] for storing in MongoDB.
+     * The [MongoSObject] itself becomes the content of the [VALUE_FIELD].
+     * The key should be set separately.
+     *
+     * @param mongoSObject The [MongoSObject] to convert.
+     * @return The [Document] representation, typically for the [VALUE_FIELD].
+     */
+    internal fun convertMongoSObjectToDocumentValue(mongoSObject: MongoSObject): Document =
+        Document.parse(gson.toJson(mongoSObject))
+
+    /**
+     * Converts any object to its [Document] representation using Gson.
+     * This is a general-purpose utility.
+     */
+    fun convertToDocument(obj: Any): Document = Document.parse(gson.toJson(obj))
+
+
+    /**
+     * Converts a [Document] to its JSON string representation.
+     *
+     * @param document The document to convert.
+     * @return The JSON string.
+     */
+    fun convertDocumentToJson(document: Document): String = gson.toJson(document)
+
+    /**
+     * Converts a JSON string to a [Document].
+     *
+     * @param json The JSON string to convert.
+     * @return The [Document].
+     */
+    fun convertJsonToDocument(json: String): Document = Document.parse(json)
 
     /**
      * Saves all documents in the given collection to a JSON file in MongoDB Extended JSON format,
