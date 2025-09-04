@@ -68,30 +68,6 @@ open class Database {
     fun set(collection: String, key: Any, value: Any): Unit = set(collection, key, value, async = false)
 
     /**
-     * Sets (upserts) a value in the specified collection with the provided key and value.
-     *
-     * @param collection The collection name.
-     * @param key The key for the value.
-     * @param value The value to set.
-     * @param async Whether the operation should be asynchronous.
-     * @throws MongoSWriteException if there is an issue during the write operation.
-     */
-    fun set(collection: String, key: Any, value: Any, async: Boolean = false) {
-        val documentToUpsert = Document(KEY_FIELD, key)
-            .append(VALUE_FIELD, value.toBsonValue())
-
-        if (async) {
-            CoroutineScope(Dispatchers.IO).launch {
-                upsertDocumentSuspend(collection, key, documentToUpsert)
-            }
-        } else {
-            runBlocking(Dispatchers.IO) {
-                upsertDocumentSuspend(collection, key, documentToUpsert)
-            }
-        }
-    }
-
-    /**
      * Sets (upserts) a value in the specified collection with the provided key and value of type [T].
      * If a document with the key already exists, it will be replaced. Otherwise, a new document will be inserted.
      *
