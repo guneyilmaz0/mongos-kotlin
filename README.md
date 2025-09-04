@@ -11,7 +11,7 @@ A lightweight and easy-to-use Java wrapper for MongoDB operations.
 
 ## Requirements
 
-- Java 21 or higher
+- Java 17 or higher
 - MongoDB server
 - Gradle 8.0+ (for building)
 

@@ -7,7 +7,10 @@ import com.mongodb.client.MongoClient
 import com.mongodb.client.MongoClients
 import com.mongodb.client.MongoCollection
 import com.mongodb.client.ChangeStreamIterable
+import net.guneyilmaz0.mongos4k.exceptions.MongoSConnectionException
 import org.bson.Document
+import org.slf4j.LoggerFactory
+import java.io.Closeable
 
 /**
  * Represents a MongoDB client, extending [Database] functionalities.
@@ -19,8 +22,9 @@ import org.bson.Document
  * @throws MongoException if the connection to MongoDB fails during initialization.
  */
 @Suppress("unused", "MemberVisibilityCanBePrivate")
-class MongoS : Database {
+class MongoS : Database, Closeable, AutoCloseable {
     private val mongo: MongoClient
+    private val logger = LoggerFactory.getLogger(MongoS::class.java)
 
     /**
      * Initializes a new instance of the MongoS class with the specified host, port, and database name.
@@ -36,10 +40,10 @@ class MongoS : Database {
             super.init(mongo.getDatabase(dbName))
             if (!super.isConnected()) {
                 mongo.close()
-                throw MongoException("Failed to connect to MongoDB or ping was unsuccessful at $host:$port")
+                throw MongoSConnectionException("Failed to connect to MongoDB at $host:$port")
             }
         } catch (e: Exception) {
-            throw MongoException("Error initializing MongoDB connection at $host:$port: ${e.message}", e)
+            throw MongoSConnectionException("Error initializing MongoDB connection at $host:$port", e)
         }
     }
 
@@ -60,10 +64,10 @@ class MongoS : Database {
             super.init(mongo.getDatabase(dbName))
             if (!super.isConnected()) {
                 mongo.close()
-                throw MongoException("Failed to connect to MongoDB or ping was unsuccessful using URI: $uri")
+                throw MongoSConnectionException("Failed to connect using URI: $uri")
             }
         } catch (e: Exception) {
-            throw MongoException("Error initializing MongoDB connection with URI $uri: ${e.message}", e)
+            throw MongoSConnectionException("Error initializing MongoDB connection with URI $uri", e)
         }
     }
 
@@ -79,10 +83,10 @@ class MongoS : Database {
             super.init(mongo.getDatabase(dbName))
             if (!super.isConnected()) {
                 mongo.close()
-                throw MongoException("Failed to connect to default MongoDB (localhost:27017) or ping was unsuccessful.")
+                throw MongoSConnectionException("Failed to connect to default MongoDB (localhost:27017)")
             }
         } catch (e: Exception) {
-            throw MongoException("Error initializing MongoDB connection to default (localhost:27017): ${e.message}", e)
+            throw MongoSConnectionException("Error initializing MongoDB connection to default", e)
         }
     }
 
@@ -122,7 +126,8 @@ class MongoS : Database {
      * It's important to call this method when the MongoS instance is no longer needed
      * to prevent resource leaks.
      */
-    fun close() {
+    override fun close() {
+        logger.info("Closing MongoS client...")
         mongo.close()
     }
 }

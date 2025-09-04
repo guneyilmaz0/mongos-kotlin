@@ -7,7 +7,7 @@ kotlin {
 }
 
 group = "net.guneyilmaz0.mongos4k"
-version = "1.2.7"
+version = "1.3.1"
 
 repositories {
     mavenCentral()
