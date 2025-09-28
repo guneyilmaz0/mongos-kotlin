@@ -99,7 +99,7 @@ jobs:
         ports:
           - 27017:27017
         options: >-
-          --health-cmd "mongo --eval 'db.runCommand({ping: 1})'"
+          --health-cmd "echo 'db.runCommand({ping: 1})' | mongo --quiet"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -122,8 +122,13 @@ jobs:
 
       - name: Wait for MongoDB to be ready
         run: |
-          until mongosh --eval "print('MongoDB is ready')"; do
-            echo "Waiting for MongoDB to start..."
+          echo "Waiting for MongoDB to be ready..."
+          for i in {1..30}; do
+            if nc -z localhost 27017; then
+              echo "MongoDB is ready!"
+              break
+            fi
+            echo "Attempt $i: MongoDB not ready yet, waiting..."
             sleep 2
           done
 
@@ -245,6 +250,11 @@ jobs:
         image: mongo:7.0
         ports:
           - 27017:27017
+        options: >-
+          --health-cmd "echo 'db.runCommand({ping: 1})' | mongo --quiet"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     
     steps:
       - name: Checkout code
@@ -261,6 +271,18 @@ jobs:
 
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
+
+      - name: Wait for MongoDB to be ready
+        run: |
+          echo "Waiting for MongoDB to be ready..."
+          for i in {1..30}; do
+            if nc -z localhost 27017; then
+              echo "MongoDB is ready!"
+              break
+            fi
+            echo "Attempt $i: MongoDB not ready yet, waiting..."
+            sleep 2
+          done
 
       - name: Run performance benchmarks
         run: ./gradlew jmh || true  # Continue even if no benchmarks exist yet
