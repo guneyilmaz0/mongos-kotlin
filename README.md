@@ -34,7 +34,7 @@ A professional, high-performance, and easy-to-use Kotlin wrapper for MongoDB ope
 
 ```kotlin
 dependencies {
-    implementation("net.guneyilmaz0.mongos4k:mongos-kotlin:VERSION")
+    implementation("com.github.guneyilmaz0:mongos-kotlin:VERSION")
 }
 ```
 
@@ -42,7 +42,7 @@ dependencies {
 
 ```gradle
 dependencies {
-    implementation 'net.guneyilmaz0.mongos4k:mongos-kotlin:VERSION'
+    implementation 'com.github.guneyilmaz0:mongos-kotlin:VERSION'
 }
 ```
 
@@ -50,7 +50,7 @@ dependencies {
 
 ```xml
 <dependency>
-    <groupId>net.guneyilmaz0.mongos4k</groupId>
+    <groupId>com.github.guneyilmaz0</groupId>
     <artifactId>mongos-kotlin</artifactId>
     <version>VERSION</version>
 </dependency>
