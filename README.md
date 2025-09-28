@@ -1,10 +1,20 @@
 # MongoS Kotlin
 
+<div align="center">
+  <img src="logo.png" alt="MongoS Kotlin Logo" width="200" height="200">
+  
+  <h3>A Professional, High-Performance Kotlin MongoDB Wrapper</h3>
+</div>
+
+<div align="center">
+
 [![CI/CD Pipeline](https://github.com/guneyilmaz0/mongos-kotlin/actions/workflows/ci.yml/badge.svg)](https://github.com/guneyilmaz0/mongos-kotlin/actions/workflows/ci.yml)
 [![Maven Central](https://img.shields.io/maven-central/v/net.guneyilmaz0.mongos4k/mongos-kotlin.svg)](https://search.maven.org/artifact/net.guneyilmaz0.mongos4k/mongos-kotlin)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Kotlin](https://img.shields.io/badge/kotlin-2.0.0-blue.svg?logo=kotlin)](http://kotlinlang.org)
 [![MongoDB](https://img.shields.io/badge/MongoDB-5.1.1-green.svg)](https://www.mongodb.com/)
+
+</div>
 
 A professional, high-performance, and easy-to-use Kotlin wrapper for MongoDB operations. MongoS Kotlin provides a clean, type-safe API with advanced features like connection pooling, automatic indexing, performance monitoring, and comprehensive error handling.
 
