@@ -6,12 +6,19 @@ import com.mongodb.MongoException
 import com.mongodb.client.FindIterable
 import com.mongodb.client.MongoDatabase
 import com.mongodb.client.model.Filters
-import com.mongodb.client.model.ReplaceOptions
 import com.mongodb.client.model.IndexOptions
 import com.mongodb.client.model.Indexes
+import com.mongodb.client.model.ReplaceOptions
 import com.mongodb.client.result.InsertManyResult
-import kotlinx.coroutines.*
-import net.guneyilmaz0.mongos4k.exceptions.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import net.guneyilmaz0.mongos4k.exceptions.MongoSConnectionException
+import net.guneyilmaz0.mongos4k.exceptions.MongoSReadException
+import net.guneyilmaz0.mongos4k.exceptions.MongoSTypeException
+import net.guneyilmaz0.mongos4k.exceptions.MongoSWriteException
 import org.bson.BsonDocument
 import org.bson.BsonInt64
 import org.bson.Document
@@ -37,18 +44,18 @@ import java.util.concurrent.ConcurrentHashMap
  */
 @Suppress("unused", "MemberVisibilityCanBePrivate")
 open class Database {
-
     companion object {
         const val KEY_FIELD = "key"
         const val VALUE_FIELD = "value"
-        
-        private val gsonBuilder = GsonBuilder()
-            .setPrettyPrinting()
-            .serializeNulls()
-            .create()
-        
+
+        private val gsonBuilder =
+            GsonBuilder()
+                .setPrettyPrinting()
+                .serializeNulls()
+                .create()
+
         val gson: Gson = gsonBuilder
-        
+
         // Index cache to prevent duplicate index creation
         private val indexCache = ConcurrentHashMap<String, Boolean>()
 
@@ -58,13 +65,16 @@ open class Database {
          * Otherwise, it's returned as is (hoping it's a type MongoDB driver can handle).
          */
         private fun Any.toBsonValue(): Any {
-            return if (this is MongoSObject) Document.parse(gson.toJson(this))
-            else this
+            return if (this is MongoSObject) {
+                Document.parse(gson.toJson(this))
+            } else {
+                this
+            }
         }
     }
 
     private val logger = LoggerFactory.getLogger(Database::class.java)
-    
+
     lateinit var database: MongoDatabase
         private set
 
@@ -84,7 +94,7 @@ open class Database {
     /**
      * Ensures that the collection has the proper index on the key field for optimal performance.
      * Uses caching to avoid redundant index creation operations.
-     * 
+     *
      * @param collection The collection name.
      */
     private fun ensureKeyIndex(collection: String) {
@@ -93,7 +103,7 @@ open class Database {
             try {
                 database.getCollection(collection).createIndex(
                     Indexes.ascending(KEY_FIELD),
-                    IndexOptions().background(true).name("${KEY_FIELD}_idx")
+                    IndexOptions().background(true).name("${KEY_FIELD}_idx"),
                 )
                 logger.debug("Index created for collection: $collection")
             } catch (e: Exception) {
@@ -112,7 +122,11 @@ open class Database {
      * @param key The key for the value (will be used as _id or your custom key field).
      * @param value The value to set. Can be a primitive, a custom object, or a [MongoSObject].
      */
-    fun set(collection: String, key: Any, value: Any): Unit = set(collection, key, value, async = false)
+    fun set(
+        collection: String,
+        key: Any,
+        value: Any,
+    ): Unit = set(collection, key, value, async = false)
 
     /**
      * Sets (upserts) a value in the specified collection with the provided key and value of type [T].
@@ -126,11 +140,17 @@ open class Database {
      * @param async Whether the operation should be asynchronous.
      * @throws MongoSWriteException if there is an issue during the write operation.
      */
-    fun <T : Any> set(collection: String, key: Any, value: T, async: Boolean = false) {
+    fun <T : Any> set(
+        collection: String,
+        key: Any,
+        value: T,
+        async: Boolean = false,
+    ) {
         ensureKeyIndex(collection)
-        
-        val documentToUpsert = Document(KEY_FIELD, key)
-            .append(VALUE_FIELD, value.toBsonValue())
+
+        val documentToUpsert =
+            Document(KEY_FIELD, key)
+                .append(VALUE_FIELD, value.toBsonValue())
 
         try {
             if (async) {
@@ -157,11 +177,15 @@ open class Database {
      * @param key The key for the document.
      * @param document The document to upsert.
      */
-    private suspend fun upsertDocumentSuspend(collection: String, key: Any, document: Document) = withContext(Dispatchers.IO) {
+    private suspend fun upsertDocumentSuspend(
+        collection: String,
+        key: Any,
+        document: Document,
+    ) = withContext(Dispatchers.IO) {
         database.getCollection(collection).replaceOne(
-            createKeyFilter(key), 
-            document, 
-            ReplaceOptions().upsert(true)
+            createKeyFilter(key),
+            document,
+            ReplaceOptions().upsert(true),
         )
     }
 
@@ -174,17 +198,21 @@ open class Database {
      * @return The result of the insert many operation.
      * @throws MongoSWriteException if there is an issue during the insert operation.
      */
-    suspend fun insertMany(collection: String, documents: List<Document>): InsertManyResult = withContext(Dispatchers.IO) {
-        try {
-            ensureKeyIndex(collection)
-            val result = database.getCollection(collection).insertMany(documents)
-            logger.info("Successfully inserted ${documents.size} documents into $collection")
-            result
-        } catch (e: Exception) {
-            logger.error("Failed to insertMany into $collection", e)
-            throw MongoSWriteException("Failed to insertMany into $collection", e)
+    suspend fun insertMany(
+        collection: String,
+        documents: List<Document>,
+    ): InsertManyResult =
+        withContext(Dispatchers.IO) {
+            try {
+                ensureKeyIndex(collection)
+                val result = database.getCollection(collection).insertMany(documents)
+                logger.info("Successfully inserted ${documents.size} documents into $collection")
+                result
+            } catch (e: Exception) {
+                logger.error("Failed to insertMany into $collection", e)
+                throw MongoSWriteException("Failed to insertMany into $collection", e)
+            }
         }
-    }
 
     /**
      * Removes a document from the specified collection with the provided key.
@@ -195,7 +223,10 @@ open class Database {
      * @return The removed document, or null if no document was found and deleted.
      * @throws MongoSWriteException if there is an issue during the delete operation.
      */
-    fun remove(collection: String, key: Any): Document? =
+    fun remove(
+        collection: String,
+        key: Any,
+    ): Document? =
         try {
             val result = database.getCollection(collection).findOneAndDelete(createKeyFilter(key))
             if (result != null) {
@@ -218,7 +249,10 @@ open class Database {
      * @return True if the document exists, false otherwise.
      * @throws MongoSReadException if there is an issue during the read operation.
      */
-    fun exists(collection: String, key: Any): Boolean =
+    fun exists(
+        collection: String,
+        key: Any,
+    ): Boolean =
         try {
             database.getCollection(collection).countDocuments(createKeyFilter(key), com.mongodb.client.model.CountOptions().limit(1)) > 0
         } catch (e: Exception) {
@@ -229,7 +263,7 @@ open class Database {
     /**
      * Gets a cached list of all collection names in the current database.
      * Results are sorted for consistent ordering.
-     * 
+     *
      * @return A sorted list of collection names in the current database.
      * @throws MongoSReadException if there is an issue retrieving the collection names.
      */
@@ -276,7 +310,11 @@ open class Database {
      * @return A list of objects of the specified type [T].
      * @throws MongoSReadException if there is an issue during the read operation.
      */
-    fun <T : Any> getAllList(collection: String, clazz: Class<T>, filters: Map<String, Any> = emptyMap()): List<T> {
+    fun <T : Any> getAllList(
+        collection: String,
+        clazz: Class<T>,
+        filters: Map<String, Any> = emptyMap(),
+    ): List<T> {
         val bsonFilters = filters.map { Filters.eq(it.key, it.value) }
         val finalFilter = if (bsonFilters.isEmpty()) BsonDocument() else Filters.and(bsonFilters)
 
@@ -304,8 +342,10 @@ open class Database {
     /**
      * Inline convenience method for getAllList with reified type parameter.
      */
-    inline fun <reified T : Any> getAllList(collection: String, filters: Map<String, Any> = emptyMap()): List<T> =
-        getAllList(collection, T::class.java, filters)
+    inline fun <reified T : Any> getAllList(
+        collection: String,
+        filters: Map<String, Any> = emptyMap(),
+    ): List<T> = getAllList(collection, T::class.java, filters)
 
     /**
      * Retrieves all documents from the specified collection as a map with optimized performance.
@@ -317,7 +357,11 @@ open class Database {
      * @return A map where keys are from [KEY_FIELD] and values are objects of type [T].
      * @throws MongoSReadException if there is an issue during the read operation.
      */
-    fun <T : Any> getAllMap(collection: String, clazz: Class<T>, filters: Map<String, Any> = emptyMap()): Map<String, T> {
+    fun <T : Any> getAllMap(
+        collection: String,
+        clazz: Class<T>,
+        filters: Map<String, Any> = emptyMap(),
+    ): Map<String, T> {
         val bsonFilters = filters.map { Filters.eq(it.key, it.value) }
         val finalFilter = if (bsonFilters.isEmpty()) BsonDocument() else Filters.and(bsonFilters)
 
@@ -325,7 +369,7 @@ open class Database {
             val results = mutableMapOf<String, T>()
             var processedCount = 0
             var skippedCount = 0
-            
+
             database.getCollection(collection)
                 .find(finalFilter)
                 .forEach { doc ->
@@ -343,7 +387,7 @@ open class Database {
                         skippedCount++
                     }
                 }
-            
+
             logger.debug("getAllMap from $collection: processed=$processedCount, skipped=$skippedCount")
             results
         } catch (e: Exception) {
@@ -355,8 +399,10 @@ open class Database {
     /**
      * Inline convenience method for getAllMap with reified type parameter.
      */
-    inline fun <reified T : Any> getAllMap(collection: String, filters: Map<String, Any> = emptyMap()): Map<String, T> =
-        getAllMap(collection, T::class.java, filters)
+    inline fun <reified T : Any> getAllMap(
+        collection: String,
+        filters: Map<String, Any> = emptyMap(),
+    ): Map<String, T> = getAllMap(collection, T::class.java, filters)
 
     /**
      * Retrieves a value from the specified collection with the provided key using optimized queries.
@@ -370,13 +416,19 @@ open class Database {
      * @throws MongoSReadException if there is an issue during the read operation.
      * @throws MongoSTypeException if there is an issue converting the stored value to type [T].
      */
-    fun <T : Any> get(collection: String, key: Any, clazz: Class<T>, defaultValue: T? = null): T? {
-        val document = try {
-            getDocument(collection, key)
-        } catch (e: Exception) {
-            logger.error("Failed to get key=$key from $collection", e)
-            throw MongoSReadException("Failed to get key=$key from $collection", e)
-        }
+    fun <T : Any> get(
+        collection: String,
+        key: Any,
+        clazz: Class<T>,
+        defaultValue: T? = null,
+    ): T? {
+        val document =
+            try {
+                getDocument(collection, key)
+            } catch (e: Exception) {
+                logger.error("Failed to get key=$key from $collection", e)
+                throw MongoSReadException("Failed to get key=$key from $collection", e)
+            }
 
         return if (document != null) {
             try {
@@ -393,8 +445,11 @@ open class Database {
     /**
      * Inline convenience method for get with reified type parameter.
      */
-    inline fun <reified T : Any> get(collection: String, key: Any, defaultValue: T? = null): T? =
-        get(collection, key, T::class.java, defaultValue)
+    inline fun <reified T : Any> get(
+        collection: String,
+        key: Any,
+        defaultValue: T? = null,
+    ): T? = get(collection, key, T::class.java, defaultValue)
 
     /**
      * Enhanced helper function to convert a Document's VALUE_FIELD to the target type T.
@@ -405,7 +460,10 @@ open class Database {
      * @return The value converted to type T, or null if VALUE_FIELD is absent.
      * @throws MongoSTypeException if conversion to type T fails.
      */
-    fun <T : Any> documentToTargetType(document: Document, clazz: Class<T>): T? {
+    fun <T : Any> documentToTargetType(
+        document: Document,
+        clazz: Class<T>,
+    ): T? {
         val valuePart = document[VALUE_FIELD] ?: return null
         return try {
             when {
@@ -426,8 +484,7 @@ open class Database {
     /**
      * Inline convenience method for documentToTargetType with reified type parameter.
      */
-    inline fun <reified T : Any> documentToTargetType(document: Document): T? =
-        documentToTargetType(document, T::class.java)
+    inline fun <reified T : Any> documentToTargetType(document: Document): T? = documentToTargetType(document, T::class.java)
 
     /**
      * Gets a single document from the specified collection with optimized query performance.
@@ -437,7 +494,10 @@ open class Database {
      * @return The [Document] if found, otherwise null.
      * @throws MongoSReadException if there is an issue during the read operation.
      */
-    fun getDocument(collection: String, key: Any): Document? =
+    fun getDocument(
+        collection: String,
+        key: Any,
+    ): Document? =
         try {
             database.getCollection(collection)
                 .find(createKeyFilter(key))
@@ -456,7 +516,10 @@ open class Database {
      * @return A [FindIterable<Document>] containing the documents that match the criteria.
      * @throws MongoSReadException if there is an issue during the read operation.
      */
-    fun getDocuments(collection: String, key: Any): FindIterable<Document> =
+    fun getDocuments(
+        collection: String,
+        key: Any,
+    ): FindIterable<Document> =
         try {
             database.getCollection(collection).find(createKeyFilter(key))
         } catch (e: Exception) {
@@ -472,7 +535,10 @@ open class Database {
      * @return A [List<Document>] containing the documents that match the criteria.
      * @throws MongoSReadException if there is an issue during the read operation.
      */
-    fun getDocumentsAsList(collection: String, key: Any): List<Document> =
+    fun getDocumentsAsList(
+        collection: String,
+        key: Any,
+    ): List<Document> =
         try {
             getDocuments(collection, key).toList().also { docs ->
                 logger.debug("Retrieved {} documents for key={} from {}", docs.size, key, collection)
@@ -489,8 +555,7 @@ open class Database {
      * @param mongoSObject The [MongoSObject] to convert.
      * @return The [Document] representation, typically for the [VALUE_FIELD].
      */
-    internal fun convertMongoSObjectToDocumentValue(mongoSObject: MongoSObject): Document =
-        Document.parse(gson.toJson(mongoSObject))
+    internal fun convertMongoSObjectToDocumentValue(mongoSObject: MongoSObject): Document = Document.parse(gson.toJson(mongoSObject))
 
     /**
      * Converts any object to its [Document] representation using optimized Gson serialization.
@@ -522,7 +587,10 @@ open class Database {
      * @return The [File] object where the data was saved.
      * @throws MongoSWriteException if there is an issue during the file writing process.
      */
-    fun saveAsJson(collection: String, path: String): File {
+    fun saveAsJson(
+        collection: String,
+        path: String,
+    ): File {
         try {
             val directory = File(path)
             if (!directory.exists()) {
@@ -535,7 +603,7 @@ open class Database {
 
             val prettyPrintSettings = JsonWriterSettings.builder().indent(true).build()
             var documentCount = 0
-            
+
             file.bufferedWriter().use { writer ->
                 writer.write("[\n")
                 val iterator = documents.iterator()
@@ -546,7 +614,7 @@ open class Database {
                     if (iterator.hasNext()) writer.write(",")
                     writer.newLine()
                     documentCount++
-                    
+
                     // Log progress for large collections
                     if (documentCount % 1000 == 0) {
                         logger.info("Saved $documentCount documents to JSON...")
@@ -554,7 +622,7 @@ open class Database {
                 }
                 writer.write("]\n")
             }
-            
+
             logger.info("Successfully saved $documentCount documents from $collection to ${file.absolutePath}")
             return file
         } catch (e: Exception) {
@@ -583,7 +651,7 @@ open class Database {
 
     /**
      * Gets performance statistics for a collection including document count and storage size.
-     * 
+     *
      * @param collection The collection name.
      * @return A map containing collection statistics.
      */
@@ -595,7 +663,7 @@ open class Database {
                 "size" to (stats.getLong("size") ?: 0L),
                 "storageSize" to (stats.getLong("storageSize") ?: 0L),
                 "avgObjSize" to (stats.getDouble("avgObjSize") ?: 0.0),
-                "indexCount" to (stats.getInteger("nindexes") ?: 0)
+                "indexCount" to (stats.getInteger("nindexes") ?: 0),
             ).also { collectionStats ->
                 logger.debug("Collection stats for {}: {}", collection, collectionStats)
             }

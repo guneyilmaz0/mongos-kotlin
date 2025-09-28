@@ -3,10 +3,10 @@ package net.guneyilmaz0.mongos4k
 import com.mongodb.ConnectionString
 import com.mongodb.MongoClientSettings
 import com.mongodb.MongoException
+import com.mongodb.client.ChangeStreamIterable
 import com.mongodb.client.MongoClient
 import com.mongodb.client.MongoClients
 import com.mongodb.client.MongoCollection
-import com.mongodb.client.ChangeStreamIterable
 import com.mongodb.connection.ClusterSettings
 import net.guneyilmaz0.mongos4k.exceptions.MongoSConnectionException
 import org.bson.Document
@@ -34,7 +34,7 @@ import java.util.concurrent.TimeUnit
 class MongoS : Database, Closeable, AutoCloseable {
     private val mongo: MongoClient
     private val logger = LoggerFactory.getLogger(MongoS::class.java)
-    
+
     companion object {
         /**
          * Creates optimized MongoDB client settings with professional defaults.
@@ -42,33 +42,33 @@ class MongoS : Database, Closeable, AutoCloseable {
          */
         private fun createOptimizedClientSettings(connectionString: ConnectionString? = null): MongoClientSettings.Builder {
             val builder = MongoClientSettings.builder()
-            
+
             if (connectionString != null) {
                 builder.applyConnectionString(connectionString)
             }
-            
+
             // Optimized connection pool settings
             builder.applyToConnectionPoolSettings { poolBuilder ->
                 poolBuilder
                     .maxSize(20) // Maximum number of connections
-                    .minSize(5)  // Minimum number of connections
+                    .minSize(5) // Minimum number of connections
                     .maxConnectionIdleTime(30, TimeUnit.SECONDS)
                     .maxConnectionLifeTime(0, TimeUnit.MILLISECONDS) // 0 means no limit
                     .maxWaitTime(5, TimeUnit.SECONDS)
             }
-            
+
             // Socket settings for better performance
             builder.applyToSocketSettings { socketBuilder ->
                 socketBuilder
                     .connectTimeout(5, TimeUnit.SECONDS)
                     .readTimeout(10, TimeUnit.SECONDS)
             }
-            
+
             // Server selection timeout
             builder.applyToClusterSettings { clusterBuilder: ClusterSettings.Builder ->
                 clusterBuilder.serverSelectionTimeout(5, TimeUnit.SECONDS)
             }
-            
+
             return builder
         }
     }
@@ -87,10 +87,10 @@ class MongoS : Database, Closeable, AutoCloseable {
         try {
             val connectionString = ConnectionString("mongodb://$host:$port")
             val clientSettings = createOptimizedClientSettings(connectionString).build()
-            
+
             mongo = MongoClients.create(clientSettings)
             super.init(mongo.getDatabase(dbName))
-            
+
             if (!super.isConnected()) {
                 mongo.close()
                 throw MongoSConnectionException("Failed to connect to MongoDB at $host:$port")
@@ -115,10 +115,10 @@ class MongoS : Database, Closeable, AutoCloseable {
         try {
             val connectionString = ConnectionString(uri)
             val clientSettings = createOptimizedClientSettings(connectionString).build()
-            
+
             mongo = MongoClients.create(clientSettings)
             super.init(mongo.getDatabase(dbName))
-            
+
             if (!super.isConnected()) {
                 mongo.close()
                 throw MongoSConnectionException("Failed to connect using URI: $uri")
@@ -143,7 +143,7 @@ class MongoS : Database, Closeable, AutoCloseable {
             val clientSettings = createOptimizedClientSettings().build()
             mongo = MongoClients.create(clientSettings)
             super.init(mongo.getDatabase(dbName))
-            
+
             if (!super.isConnected()) {
                 mongo.close()
                 throw MongoSConnectionException("Failed to connect to default MongoDB (localhost:27017)")
@@ -193,7 +193,7 @@ class MongoS : Database, Closeable, AutoCloseable {
         logger.debug("Creating MongoS instance for: $databaseName")
         return MongoS(mongo, databaseName)
     }
-    
+
     /**
      * Private constructor for creating MongoS instances that share a client.
      * This is used internally for efficient database switching.
@@ -253,23 +253,25 @@ class MongoS : Database, Closeable, AutoCloseable {
     fun getDatabaseInfo(): Map<String, Any> {
         return try {
             val collections = getCollections()
-            val info = mutableMapOf<String, Any>(
-                "name" to database.name,
-                "collections" to collections,
-                "collectionCount" to collections.size
-            )
-            
+            val info =
+                mutableMapOf<String, Any>(
+                    "name" to database.name,
+                    "collections" to collections,
+                    "collectionCount" to collections.size,
+                )
+
             // Add collection statistics
-            val collectionStats = collections.associateWith { collectionName ->
-                try {
-                    getCollectionStats(collectionName)
-                } catch (e: Exception) {
-                    logger.warn("Failed to get stats for collection $collectionName", e)
-                    emptyMap<String, Any>()
+            val collectionStats =
+                collections.associateWith { collectionName ->
+                    try {
+                        getCollectionStats(collectionName)
+                    } catch (e: Exception) {
+                        logger.warn("Failed to get stats for collection $collectionName", e)
+                        emptyMap<String, Any>()
+                    }
                 }
-            }
             info["collectionStats"] = collectionStats
-            
+
             logger.debug("Retrieved database info for: ${database.name}")
             info.toMap() // Return immutable map
         } catch (e: Exception) {

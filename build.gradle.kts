@@ -33,14 +33,12 @@ dependencies {
     implementation("org.mongodb:mongodb-driver-sync:5.1.1")
     implementation("com.google.code.gson:gson:2.10.1")
     implementation("ch.qos.logback:logback-classic:1.5.6")
-    
     // Test dependencies
     testImplementation("org.jetbrains.kotlin:kotlin-test")
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.0")
     testImplementation("org.mockito.kotlin:mockito-kotlin:5.1.0")
     testImplementation("org.testcontainers:mongodb:1.19.1")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.0")
-    
     // Test runtime
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
@@ -67,19 +65,17 @@ publishing {
     publications {
         create<MavenPublication>("maven") {
             from(components["java"])
-            
             pom {
                 name.set("MongoS Kotlin")
                 description.set("A lightweight and easy-to-use Kotlin wrapper for MongoDB operations")
                 url.set("https://github.com/guneyilmaz0/mongos-kotlin")
-                
                 licenses {
                     license {
                         name.set("MIT License")
                         url.set("https://opensource.org/licenses/MIT")
                     }
                 }
-                
+
                 developers {
                     developer {
                         id.set("guneyilmaz0")
@@ -87,7 +83,7 @@ publishing {
                         email.set("guneyilmaz0@gmail.com")
                     }
                 }
-                
+
                 scm {
                     connection.set("scm:git:git://github.com/guneyilmaz0/mongos-kotlin.git")
                     developerConnection.set("scm:git:ssh://github.com:guneyilmaz0/mongos-kotlin.git")

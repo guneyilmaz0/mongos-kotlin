@@ -8,7 +8,7 @@ import com.google.gson.JsonSerializer
 import org.bson.Document
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
-import java.util.*
+import java.util.UUID
 
 /**
  * Enhanced abstract base class for MongoDB-related objects with professional features.
@@ -26,18 +26,24 @@ import java.util.*
  */
 @Suppress("unused")
 abstract class MongoSObject {
-    
     companion object {
-        private val gson: Gson = GsonBuilder()
-            .setPrettyPrinting()
-            .serializeNulls()
-            .registerTypeAdapter(LocalDateTime::class.java, JsonSerializer<LocalDateTime> { src, _, _ ->
-                JsonPrimitive(src.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
-            })
-            .registerTypeAdapter(LocalDateTime::class.java, JsonDeserializer { json, _, _ ->
-                LocalDateTime.parse(json.asString, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
-            })
-            .create()
+        private val gson: Gson =
+            GsonBuilder()
+                .setPrettyPrinting()
+                .serializeNulls()
+                .registerTypeAdapter(
+                    LocalDateTime::class.java,
+                    JsonSerializer<LocalDateTime> { src, _, _ ->
+                        JsonPrimitive(src.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
+                    },
+                )
+                .registerTypeAdapter(
+                    LocalDateTime::class.java,
+                    JsonDeserializer { json, _, _ ->
+                        LocalDateTime.parse(json.asString, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+                    },
+                )
+                .create()
     }
 
     /**
@@ -82,7 +88,7 @@ abstract class MongoSObject {
 
     /**
      * Sets a custom ID for the object.
-     * 
+     *
      * @param customId The custom ID to set.
      */
     fun updateId(customId: String) {
@@ -92,14 +98,14 @@ abstract class MongoSObject {
 
     /**
      * Converts the object to its JSON representation using optimized Gson serialization.
-     * 
+     *
      * @return JSON string representation of the object.
      */
     fun toJson(): String = gson.toJson(this)
 
     /**
      * Converts the object to a MongoDB Document for storage.
-     * 
+     *
      * @return MongoDB Document representation.
      */
     fun toDocument(): Document = Document.parse(toJson())
@@ -107,7 +113,7 @@ abstract class MongoSObject {
     /**
      * Creates a copy of this object with updated timestamp and incremented version.
      * Subclasses should override this method to provide proper deep copying.
-     * 
+     *
      * @return A copy of this object with updated metadata.
      */
     open fun copy(): MongoSObject {
@@ -122,43 +128,44 @@ abstract class MongoSObject {
     /**
      * Validates the object's data integrity.
      * Subclasses should override this method to implement custom validation logic.
-     * 
+     *
      * @return List of validation error messages. Empty list means valid.
      */
     open fun validate(): List<String> {
         val errors = mutableListOf<String>()
-        
+
         if (mongoId.isBlank()) {
             errors.add("ID cannot be blank")
         }
-        
+
         if (version < 1) {
             errors.add("Version must be positive")
         }
-        
+
         return errors
     }
 
     /**
      * Checks if the object is valid (no validation errors).
-     * 
+     *
      * @return True if the object passes validation, false otherwise.
      */
     fun isValid(): Boolean = validate().isEmpty()
 
     /**
      * Gets a summary of the object for debugging and logging purposes.
-     * 
+     *
      * @return A map containing key object information.
      */
-    fun getSummary(): Map<String, Any> = mapOf(
-        "id" to mongoId,
-        "type" to this::class.java.simpleName,
-        "createdAt" to createdAt,
-        "updatedAt" to updatedAt,
-        "version" to version,
-        "isValid" to isValid()
-    )
+    fun getSummary(): Map<String, Any> =
+        mapOf(
+            "id" to mongoId,
+            "type" to this::class.java.simpleName,
+            "createdAt" to createdAt,
+            "updatedAt" to updatedAt,
+            "version" to version,
+            "isValid" to isValid(),
+        )
 
     /**
      * Compares this object with another MongoSObject based on ID.
