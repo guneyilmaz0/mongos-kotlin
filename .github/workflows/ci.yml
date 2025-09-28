@@ -80,7 +80,7 @@ jobs:
           reporter: java-junit
 
       - name: Upload test results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-results-java-${{ matrix.java-version }}
@@ -99,7 +99,7 @@ jobs:
         ports:
           - 27017:27017
         options: >-
-          --health-cmd "mongosh --eval 'db.runCommand({ping: 1})'"
+          --health-cmd "mongo --eval 'db.runCommand({ping: 1})'"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -160,7 +160,7 @@ jobs:
         run: ./gradlew dokkaHtml
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: build-artifacts
           path: |
@@ -168,7 +168,7 @@ jobs:
             build/dokka/
 
       - name: Upload documentation
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: documentation
           path: build/dokka/
@@ -198,7 +198,7 @@ jobs:
         run: ./gradlew dependencyCheckAnalyze || true  # Continue even if check fails
 
       - name: Upload security report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: security-report
@@ -268,7 +268,7 @@ jobs:
           MONGODB_URI: mongodb://localhost:27017
 
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: benchmark-results
