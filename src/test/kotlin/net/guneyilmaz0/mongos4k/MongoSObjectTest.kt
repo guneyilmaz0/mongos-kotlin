@@ -1,19 +1,24 @@
 package net.guneyilmaz0.mongos4k
 
-import org.junit.jupiter.api.*
-import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.DisplayName
+import org.junit.jupiter.api.Nested
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertTrue
 
 /**
  * Comprehensive unit tests for the MongoSObject class.
  * Tests all functionality including timestamps, validation, serialization, and utilities.
  */
 class MongoSObjectTest {
-
     private lateinit var testObject: TestMongoSObject
 
     // Test implementation of MongoSObject for testing purposes
     private class TestMongoSObject(val name: String = "", val value: Int = 0) : MongoSObject() {
-
         override fun validate(): List<String> {
             val errors = super.validate().toMutableList()
 
@@ -46,7 +51,6 @@ class MongoSObjectTest {
     @Nested
     @DisplayName("Initialization Tests")
     inner class InitializationTests {
-
         @Test
         fun `should initialize with default values`() {
             val obj = TestMongoSObject()
@@ -80,7 +84,6 @@ class MongoSObjectTest {
     @Nested
     @DisplayName("ID Management Tests")
     inner class IdManagementTests {
-
         @Test
         fun `should set custom ID`() {
             val customId = "custom-test-id"
@@ -113,7 +116,6 @@ class MongoSObjectTest {
     @Nested
     @DisplayName("Validation Tests")
     inner class ValidationTests {
-
         @Test
         fun `should validate successfully with valid data`() {
             val validObj = TestMongoSObject("Valid Name", 42)
@@ -153,7 +155,6 @@ class MongoSObjectTest {
     @Nested
     @DisplayName("Serialization Tests")
     inner class SerializationTests {
-
         @Test
         fun `should convert to JSON`() {
             val json = testObject.toJson()
@@ -187,7 +188,6 @@ class MongoSObjectTest {
     @Nested
     @DisplayName("Copy Operations Tests")
     inner class CopyOperationsTests {
-
         @Test
         fun `should create copy with updated metadata`() {
             val originalUpdatedAt = testObject.updatedAt
@@ -221,7 +221,6 @@ class MongoSObjectTest {
     @Nested
     @DisplayName("Utility Methods Tests")
     inner class UtilityMethodsTests {
-
         @Test
         fun `should provide comprehensive summary`() {
             val summary = testObject.getSummary()
@@ -247,7 +246,6 @@ class MongoSObjectTest {
     @Nested
     @DisplayName("Equality Tests")
     inner class EqualityTests {
-
         @Test
         fun `should be equal when IDs match`() {
             val obj1 = TestMongoSObject("Name1", 1)
@@ -285,7 +283,6 @@ class MongoSObjectTest {
     @Nested
     @DisplayName("Timestamp Management Tests")
     inner class TimestampManagementTests {
-
         @Test
         fun `should maintain creation timestamp`() {
             val originalCreatedAt = testObject.createdAt

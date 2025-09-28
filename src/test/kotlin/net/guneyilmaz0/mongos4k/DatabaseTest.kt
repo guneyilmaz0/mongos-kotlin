@@ -1,18 +1,21 @@
 package net.guneyilmaz0.mongos4k
 
-import org.junit.jupiter.api.*
-import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.DisplayName
+import org.junit.jupiter.api.Nested
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertTrue
 
 /**
  * Simplified unit tests for the Database class.
  * Tests core functionality without complex mocking.
  */
 class DatabaseTest {
-
     @Nested
     @DisplayName("Database Configuration Tests")
     inner class DatabaseConfigurationTests {
-
         @Test
         fun `should have correct constants`() {
             assertEquals("key", Database.KEY_FIELD)
@@ -28,7 +31,6 @@ class DatabaseTest {
     @Nested
     @DisplayName("Utility Methods Tests")
     inner class UtilityMethodsTests {
-
         private lateinit var database: Database
 
         @BeforeEach
