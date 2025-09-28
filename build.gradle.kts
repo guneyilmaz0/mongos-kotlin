@@ -3,10 +3,21 @@ plugins {
     `maven-publish`
     signing
     id("org.jetbrains.dokka") version "1.9.10"
+    id("org.jlleitschuh.gradle.ktlint") version "12.1.0"
 }
 
 kotlin {
     jvmToolchain(21)
+}
+
+ktlint {
+    version.set("1.0.1")
+    android.set(false)
+    ignoreFailures.set(false)
+    reporters {
+        reporter(org.jlleitschuh.gradle.ktlint.reporter.ReporterType.PLAIN)
+        reporter(org.jlleitschuh.gradle.ktlint.reporter.ReporterType.CHECKSTYLE)
+    }
 }
 
 group = "net.guneyilmaz0.mongos4k"
