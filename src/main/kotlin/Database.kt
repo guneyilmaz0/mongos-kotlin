@@ -45,8 +45,11 @@ import java.util.concurrent.ConcurrentHashMap
 @Suppress("unused", "MemberVisibilityCanBePrivate")
 open class Database {
     companion object {
-        const val KEY_FIELD = "key"
-        const val VALUE_FIELD = "value"
+        @JvmStatic
+        val KEY_FIELD = "key"
+
+        @JvmStatic
+        val VALUE_FIELD = "value"
 
         private val gsonBuilder =
             GsonBuilder()
@@ -54,6 +57,7 @@ open class Database {
                 .serializeNulls()
                 .create()
 
+        @JvmStatic
         val gson: Gson = gsonBuilder
 
         // Index cache to prevent duplicate index creation
@@ -69,6 +73,31 @@ open class Database {
                 Document.parse(gson.toJson(this))
             } else {
                 this
+            }
+        }
+
+        /**
+         * Converts a Number to the target number type.
+         * Handles conversions between Int, Long, Double, Float, Short, Byte.
+         *
+         * @param number The source number.
+         * @param clazz The target class.
+         * @return The converted number as type T, or null if conversion is not supported.
+         */
+        @JvmStatic
+        @Suppress("UNCHECKED_CAST")
+        fun <T> convertNumber(
+            number: Number,
+            clazz: Class<T>,
+        ): T? {
+            return when (clazz) {
+                Int::class.java, java.lang.Integer::class.java -> number.toInt() as T
+                Long::class.java, java.lang.Long::class.java -> number.toLong() as T
+                Double::class.java, java.lang.Double::class.java -> number.toDouble() as T
+                Float::class.java, java.lang.Float::class.java -> number.toFloat() as T
+                Short::class.java, java.lang.Short::class.java -> number.toShort() as T
+                Byte::class.java, java.lang.Byte::class.java -> number.toByte() as T
+                else -> null
             }
         }
     }
@@ -114,21 +143,6 @@ open class Database {
     }
 
     /**
-     * Sets (upserts) a value in the specified collection with the provided key and value.
-     * Automatically creates optimal indexes for better query performance.
-     * If a document with the key already exists, it will be replaced. Otherwise, a new document will be inserted.
-     *
-     * @param collection The collection name.
-     * @param key The key for the value (will be used as _id or your custom key field).
-     * @param value The value to set. Can be a primitive, a custom object, or a [MongoSObject].
-     */
-    fun set(
-        collection: String,
-        key: Any,
-        value: Any,
-    ): Unit = set(collection, key, value, async = false)
-
-    /**
      * Sets (upserts) a value in the specified collection with the provided key and value of type [T].
      * Includes performance optimizations and proper error handling.
      * If a document with the key already exists, it will be replaced. Otherwise, a new document will be inserted.
@@ -140,6 +154,7 @@ open class Database {
      * @param async Whether the operation should be asynchronous.
      * @throws MongoSWriteException if there is an issue during the write operation.
      */
+    @JvmOverloads
     fun <T : Any> set(
         collection: String,
         key: Any,
@@ -213,6 +228,39 @@ open class Database {
                 throw MongoSWriteException("Failed to insertMany into $collection", e)
             }
         }
+
+    /**
+     * Blocking version of [insertMany] for Java interop.
+     * Inserts multiple documents into the specified collection.
+     *
+     * @param collection The collection name.
+     * @param documents The list of documents to insert.
+     * @param async Whether the operation should be asynchronous. If true, returns null immediately.
+     * @return The result of the insert many operation, or null if async.
+     * @throws MongoSWriteException if there is an issue during the insert operation.
+     */
+    @JvmOverloads
+    fun insertManyBlocking(
+        collection: String,
+        documents: List<Document>,
+        async: Boolean = false,
+    ): InsertManyResult? {
+        return try {
+            if (async) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    insertMany(collection, documents)
+                }
+                null
+            } else {
+                runBlocking(Dispatchers.IO) {
+                    insertMany(collection, documents)
+                }
+            }
+        } catch (e: Exception) {
+            logger.error("Failed to insertManyBlocking into $collection", e)
+            throw MongoSWriteException("Failed to insertManyBlocking into $collection", e)
+        }
+    }
 
     /**
      * Removes a document from the specified collection with the provided key.
@@ -310,6 +358,7 @@ open class Database {
      * @return A list of objects of the specified type [T].
      * @throws MongoSReadException if there is an issue during the read operation.
      */
+    @JvmOverloads
     fun <T : Any> getAllList(
         collection: String,
         clazz: Class<T>,
@@ -357,6 +406,7 @@ open class Database {
      * @return A map where keys are from [KEY_FIELD] and values are objects of type [T].
      * @throws MongoSReadException if there is an issue during the read operation.
      */
+    @JvmOverloads
     fun <T : Any> getAllMap(
         collection: String,
         clazz: Class<T>,
@@ -416,6 +466,7 @@ open class Database {
      * @throws MongoSReadException if there is an issue during the read operation.
      * @throws MongoSTypeException if there is an issue converting the stored value to type [T].
      */
+    @JvmOverloads
     fun <T : Any> get(
         collection: String,
         key: Any,
@@ -468,11 +519,15 @@ open class Database {
         return try {
             when {
                 clazz.isAssignableFrom(valuePart::class.java) -> valuePart as T
+                Number::class.java.isAssignableFrom(clazz) && valuePart is Number -> {
+                    convertNumber(valuePart, clazz) ?: throw MongoSTypeException(
+                        "Unsupported number conversion: ${valuePart::class.java.name} -> ${clazz.name}",
+                    )
+                }
                 MongoSObject::class.java.isAssignableFrom(clazz) -> {
                     val valueDoc = valuePart as? Document ?: Document.parse(gson.toJson(valuePart))
                     gson.fromJson(valueDoc.toJson(), clazz)
                 }
-                clazz.isInstance(valuePart) -> valuePart as T
                 else -> gson.fromJson(gson.toJsonTree(valuePart), clazz)
             }
         } catch (e: Exception) {
