@@ -21,7 +21,7 @@ ktlint {
 }
 
 group = "net.guneyilmaz0.mongos4k"
-version = "1.4.0"
+version = "1.5.0"
 
 repositories {
     mavenCentral()
@@ -79,8 +79,8 @@ publishing {
                 developers {
                     developer {
                         id.set("guneyilmaz0")
-                        name.set("Güney Ilmaz")
-                        email.set("guneyilmaz0@gmail.com")
+                        name.set("Güney Yılmaz")
+                        email.set("guneyyilmaz2707@gmail.com")
                     }
                 }
 
