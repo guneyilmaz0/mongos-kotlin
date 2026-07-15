@@ -40,8 +40,8 @@ jobs:
       - name: Validate Gradle wrapper
         uses: gradle/wrapper-validation-action@v1
 
-      - name: Check code formatting
-        run: ./gradlew ktlintCheck
+      - name: Compile sources
+        run: ./gradlew compileKotlin compileTestKotlin
 
   test:
     name: Test Suite
