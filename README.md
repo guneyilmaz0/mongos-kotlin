@@ -88,9 +88,13 @@ fun main() {
         val user = User("John Doe", "john@example.com", 30)
         db.set("users", "user123", user)
 
-        // Retrieve typed data
+        // Retrieve typed data (non-nullable; returns null at runtime if key is absent)
         val retrievedUser = db.get<User>("users", "user123")
-        println("Retrieved: ${retrievedUser?.name}")
+        println("Retrieved: ${retrievedUser.name}")
+
+        // Safe alternatives when the key may not exist
+        val maybeUser: User? = db.getOrNull("users", "user123")
+        val userOrDefault = db.get("users", "user123", User("Default", "d@example.com", 0))
 
         // Check existence with optimized queries
         val exists = db.exists("users", "user123")
@@ -284,7 +288,9 @@ MongoS(uri: String, dbName: String)             // Full MongoDB URI
 
 // Key Methods
 fun <T : Any> set(collection: String, key: Any, value: T, async: Boolean = false)
-fun <T : Any> get(collection: String, key: Any, defaultValue: T? = null): T?
+fun <T : Any> get(collection: String, key: Any): T                 // null at runtime if absent
+fun <T : Any> get(collection: String, key: Any, default: T): T     // always non-null
+fun <T : Any> getOrNull(collection: String, key: Any): T?          // explicit nullable
 fun exists(collection: String, key: Any): Boolean
 fun remove(collection: String, key: Any): Document?
 fun checkConnectionHealth(): Boolean
@@ -296,7 +302,7 @@ Base database operations with performance features.
 
 ```kotlin
 // Batch Operations
-suspend fun insertMany(collection: String, documents: List<Document>): InsertManyResult
+fun insertMany(collection: String, documents: List<Document>): InsertManyResult
 fun <T : Any> getAllList(collection: String, filters: Map<String, Any> = emptyMap()): List<T>
 fun <T : Any> getAllMap(collection: String, filters: Map<String, Any> = emptyMap()): Map<String, T>
 

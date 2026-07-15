@@ -4,7 +4,9 @@ import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.mongodb.MongoException
 import com.mongodb.client.FindIterable
+import com.mongodb.client.MongoCollection
 import com.mongodb.client.MongoDatabase
+import com.mongodb.client.model.CountOptions
 import com.mongodb.client.model.Filters
 import com.mongodb.client.model.IndexOptions
 import com.mongodb.client.model.Indexes
@@ -12,9 +14,8 @@ import com.mongodb.client.model.ReplaceOptions
 import com.mongodb.client.result.InsertManyResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
 import net.guneyilmaz0.mongos4k.exceptions.MongoSConnectionException
 import net.guneyilmaz0.mongos4k.exceptions.MongoSReadException
 import net.guneyilmaz0.mongos4k.exceptions.MongoSTypeException
@@ -29,68 +30,46 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * This class represents a MongoDB database with enhanced performance and professional features.
- * It provides methods to initialize the database, set and get values, update and remove data, and check if data exists.
+ * Lightweight key-value style wrapper around a MongoDB database.
  *
- * Key Features:
- * - Connection pooling and resource management
- * - Optimized queries with proper indexing
- * - Concurrent operations support
- * - Comprehensive error handling
- * - Performance monitoring and logging
+ * Design goals:
+ * - **Non-nullable reads:** `get` returns `T` directly. If the key does not exist,
+ *   it returns `null` at runtime (like Java's `Map.get`), so Kotlin callers never
+ *   need `!!`. Use [getOrNull] for explicit null handling or `get` with a default.
+ * - **Performance:** collection handles and index creation are cached, reads use
+ *   projections to fetch only the value field, and writes go straight to the sync
+ *   driver (no coroutine overhead unless `async = true`).
+ * - **Interop:** every generic method has a `Class<T>` overload for Java and a
+ *   reified inline overload for Kotlin (`db.get<String>("users", "name")`).
  *
- * @property database the MongoDB database instance.
  * @author guneyilmaz0
  */
 @Suppress("unused", "MemberVisibilityCanBePrivate")
 open class Database {
+
     companion object {
+        /** Document field that stores the key. */
         @JvmStatic
         val KEY_FIELD = "key"
 
+        /** Document field that stores the value. */
         @JvmStatic
         val VALUE_FIELD = "value"
 
-        private val gsonBuilder =
-            GsonBuilder()
-                .setPrettyPrinting()
-                .serializeNulls()
-                .create()
-
+        /** Shared Gson instance used for POJO <-> Document conversion. */
         @JvmStatic
-        val gson: Gson = gsonBuilder
-
-        // Index cache to prevent duplicate index creation
-        private val indexCache = ConcurrentHashMap<String, Boolean>()
+        val gson: Gson = GsonBuilder().serializeNulls().create()
 
         /**
-         * Converts a POJO to a MongoDB Document with optimized serialization.
-         * If the object is a MongoSObject, it's converted via Gson.
-         * Otherwise, it's returned as is (hoping it's a type MongoDB driver can handle).
-         */
-        private fun Any.toBsonValue(): Any {
-            return if (this is MongoSObject) {
-                Document.parse(gson.toJson(this))
-            } else {
-                this
-            }
-        }
-
-        /**
-         * Converts a Number to the target number type.
-         * Handles conversions between Int, Long, Double, Float, Short, Byte.
+         * Converts a [Number] to the requested numeric type.
+         * MongoDB may store an Int as Long (or vice versa); this bridges the gap.
          *
-         * @param number The source number.
-         * @param clazz The target class.
-         * @return The converted number as type T, or null if conversion is not supported.
+         * @return the converted number, or null if [clazz] is not a supported numeric type.
          */
         @JvmStatic
         @Suppress("UNCHECKED_CAST")
-        fun <T> convertNumber(
-            number: Number,
-            clazz: Class<T>,
-        ): T? {
-            return when (clazz) {
+        fun <T> convertNumber(number: Number, clazz: Class<T>): T? =
+            when (clazz) {
                 Int::class.java, java.lang.Integer::class.java -> number.toInt() as T
                 Long::class.java, java.lang.Long::class.java -> number.toLong() as T
                 Double::class.java, java.lang.Double::class.java -> number.toDouble() as T
@@ -99,619 +78,487 @@ open class Database {
                 Byte::class.java, java.lang.Byte::class.java -> number.toByte() as T
                 else -> null
             }
-        }
     }
 
     private val logger = LoggerFactory.getLogger(Database::class.java)
 
+    /** Coroutine scope for fire-and-forget async writes. */
+    private val asyncScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Caches collection handles so repeated access avoids re-resolution. */
+    private val collectionCache = ConcurrentHashMap<String, MongoCollection<Document>>()
+
+    /** Tracks collections whose key index has already been created. */
+    private val indexedCollections = ConcurrentHashMap.newKeySet<String>()
+
     lateinit var database: MongoDatabase
         private set
 
+    // ---------------------------------------------------------------------
+    // Initialization
+    // ---------------------------------------------------------------------
+
     /**
-     * Initializes the database with the specified MongoDB database instance and sets up optimizations.
+     * Binds this instance to the given MongoDB database and resets internal caches.
      *
      * @param database the MongoDB database instance.
-     * @throws MongoException if there is an issue with database initialization.
      */
     open fun init(database: MongoDatabase) {
         this.database = database
-        logger.info("Database initialized: ${database.name}")
+        collectionCache.clear()
+        indexedCollections.clear()
+        logger.info("Database initialized: {}", database.name)
     }
 
-    private fun createKeyFilter(key: Any): Bson = Filters.eq(KEY_FIELD, key)
+    // ---------------------------------------------------------------------
+    // Internal helpers
+    // ---------------------------------------------------------------------
 
-    /**
-     * Ensures that the collection has the proper index on the key field for optimal performance.
-     * Uses caching to avoid redundant index creation operations.
-     *
-     * @param collection The collection name.
-     */
-    private fun ensureKeyIndex(collection: String) {
-        val cacheKey = "${database.name}.$collection"
-        if (indexCache.putIfAbsent(cacheKey, true) == null) {
+    /** Builds the standard key filter used by all key-based operations. */
+    private fun keyFilter(key: Any): Bson = Filters.eq(KEY_FIELD, key)
+
+    /** Returns a cached collection handle, ensuring the key index exists. */
+    private fun collection(name: String): MongoCollection<Document> {
+        val coll = collectionCache.computeIfAbsent(name) { database.getCollection(it) }
+        if (indexedCollections.add(name)) {
             try {
-                database.getCollection(collection).createIndex(
+                coll.createIndex(
                     Indexes.ascending(KEY_FIELD),
                     IndexOptions().background(true).name("${KEY_FIELD}_idx"),
                 )
-                logger.debug("Index created for collection: $collection")
             } catch (e: Exception) {
-                logger.warn("Index creation failed for $collection: ${e.message}")
-                indexCache.remove(cacheKey) // Remove from cache so we can retry later
+                // Retry on next access instead of failing the actual operation.
+                indexedCollections.remove(name)
+                logger.warn("Index creation failed for {}: {}", name, e.message)
             }
         }
+        return coll
     }
 
+    /** Serializes a value into a form the MongoDB driver can store. */
+    private fun Any.toStoredValue(): Any =
+        if (this is MongoSObject) Document.parse(gson.toJson(this)) else this
+
+    // ---------------------------------------------------------------------
+    // Write operations
+    // ---------------------------------------------------------------------
+
     /**
-     * Sets (upserts) a value in the specified collection with the provided key and value of type [T].
-     * Includes performance optimizations and proper error handling.
-     * If a document with the key already exists, it will be replaced. Otherwise, a new document will be inserted.
+     * Sets (upserts) a value for the given key.
+     * Existing documents with the same key are replaced.
      *
-     * @param T The type of the value to set. Must be a non-nullable type.
-     * @param collection The collection name.
-     * @param key The key for the value (will be used as _id or your custom key field).
-     * @param value The value to set. Can be a primitive, a custom object, or a [MongoSObject].
-     * @param async Whether the operation should be asynchronous.
-     * @throws MongoSWriteException if there is an issue during the write operation.
+     * @param collection the collection name.
+     * @param key the key to store the value under.
+     * @param value the value: a primitive, a POJO, or a [MongoSObject].
+     * @param async if true, the write runs in the background and errors are only logged.
+     * @throws MongoSWriteException if a synchronous write fails.
      */
     @JvmOverloads
-    fun <T : Any> set(
-        collection: String,
-        key: Any,
-        value: T,
-        async: Boolean = false,
-    ) {
-        ensureKeyIndex(collection)
+    fun <T : Any> set(collection: String, key: Any, value: T, async: Boolean = false) {
+        val document = Document(KEY_FIELD, key).append(VALUE_FIELD, value.toStoredValue())
+        val options = ReplaceOptions().upsert(true)
 
-        val documentToUpsert =
-            Document(KEY_FIELD, key)
-                .append(VALUE_FIELD, value.toBsonValue())
-
-        try {
-            if (async) {
-                CoroutineScope(Dispatchers.IO).launch {
-                    upsertDocumentSuspend(collection, key, documentToUpsert)
-                }
-            } else {
-                runBlocking(Dispatchers.IO) {
-                    upsertDocumentSuspend(collection, key, documentToUpsert)
+        if (async) {
+            asyncScope.launch {
+                try {
+                    collection(collection).replaceOne(keyFilter(key), document, options)
+                } catch (e: Exception) {
+                    logger.error("Async set failed for key=$key in $collection", e)
                 }
             }
-            logger.debug("Successfully set key={} in collection={}", key, collection)
-        } catch (e: Exception) {
-            logger.error("Failed to set key=$key in $collection", e)
-            throw MongoSWriteException("Failed to set key=$key in $collection", e)
-        }
-    }
-
-    /**
-     * Suspended method to upsert a document in the specified collection with optimized write operations.
-     * Replaces the document if it exists, otherwise inserts a new one.
-     *
-     * @param collection The collection name.
-     * @param key The key for the document.
-     * @param document The document to upsert.
-     */
-    private suspend fun upsertDocumentSuspend(
-        collection: String,
-        key: Any,
-        document: Document,
-    ) = withContext(Dispatchers.IO) {
-        database.getCollection(collection).replaceOne(
-            createKeyFilter(key),
-            document,
-            ReplaceOptions().upsert(true),
-        )
-    }
-
-    /**
-     * Batch inserts multiple documents into the specified collection with optimized performance.
-     * This operation is performed asynchronously and includes proper error handling.
-     *
-     * @param collection The collection name.
-     * @param documents The list of documents to insert. Each document should ideally have a [KEY_FIELD].
-     * @return The result of the insert many operation.
-     * @throws MongoSWriteException if there is an issue during the insert operation.
-     */
-    suspend fun insertMany(
-        collection: String,
-        documents: List<Document>,
-    ): InsertManyResult =
-        withContext(Dispatchers.IO) {
+        } else {
             try {
-                ensureKeyIndex(collection)
-                val result = database.getCollection(collection).insertMany(documents)
-                logger.info("Successfully inserted ${documents.size} documents into $collection")
-                result
+                collection(collection).replaceOne(keyFilter(key), document, options)
             } catch (e: Exception) {
-                logger.error("Failed to insertMany into $collection", e)
-                throw MongoSWriteException("Failed to insertMany into $collection", e)
+                throw MongoSWriteException("Failed to set key=$key in $collection", e)
             }
-        }
-
-    /**
-     * Blocking version of [insertMany] for Java interop.
-     * Inserts multiple documents into the specified collection.
-     *
-     * @param collection The collection name.
-     * @param documents The list of documents to insert.
-     * @param async Whether the operation should be asynchronous. If true, returns null immediately.
-     * @return The result of the insert many operation, or null if async.
-     * @throws MongoSWriteException if there is an issue during the insert operation.
-     */
-    @JvmOverloads
-    fun insertManyBlocking(
-        collection: String,
-        documents: List<Document>,
-        async: Boolean = false,
-    ): InsertManyResult? {
-        return try {
-            if (async) {
-                CoroutineScope(Dispatchers.IO).launch {
-                    insertMany(collection, documents)
-                }
-                null
-            } else {
-                runBlocking(Dispatchers.IO) {
-                    insertMany(collection, documents)
-                }
-            }
-        } catch (e: Exception) {
-            logger.error("Failed to insertManyBlocking into $collection", e)
-            throw MongoSWriteException("Failed to insertManyBlocking into $collection", e)
         }
     }
 
     /**
-     * Removes a document from the specified collection with the provided key.
-     * Includes performance logging and proper error handling.
+     * Inserts multiple documents in a single batch.
+     * Each document should ideally contain a [KEY_FIELD].
      *
-     * @param collection The collection name.
-     * @param key The key for the document.
-     * @return The removed document, or null if no document was found and deleted.
-     * @throws MongoSWriteException if there is an issue during the delete operation.
+     * @param collection the collection name.
+     * @param documents the documents to insert.
+     * @return the driver's insert result.
+     * @throws MongoSWriteException if the insert fails.
      */
-    fun remove(
-        collection: String,
-        key: Any,
-    ): Document? =
+    fun insertMany(collection: String, documents: List<Document>): InsertManyResult =
         try {
-            val result = database.getCollection(collection).findOneAndDelete(createKeyFilter(key))
-            if (result != null) {
-                logger.debug("Successfully removed key={} from collection={}", key, collection)
-            } else {
-                logger.debug("No document found with key={} in collection={}", key, collection)
-            }
-            result
+            collection(collection).insertMany(documents)
         } catch (e: Exception) {
-            logger.error("Failed to remove key=$key from $collection", e)
+            throw MongoSWriteException("Failed to insertMany into $collection", e)
+        }
+
+    /**
+     * Removes the document with the given key.
+     *
+     * @param collection the collection name.
+     * @param key the key to remove.
+     * @return the removed document, or null if no document matched.
+     * @throws MongoSWriteException if the delete fails.
+     */
+    fun remove(collection: String, key: Any): Document? =
+        try {
+            collection(collection).findOneAndDelete(keyFilter(key))
+        } catch (e: Exception) {
             throw MongoSWriteException("Failed to remove key=$key from $collection", e)
         }
 
+    // ---------------------------------------------------------------------
+    // Read operations — the get family
+    // ---------------------------------------------------------------------
+
     /**
-     * Optimized method to check if a document exists in the specified collection with the provided key.
-     * Uses count with limit for better performance on large collections.
+     * Gets the value for the given key.
      *
-     * @param collection The collection name.
-     * @param key The key for the document.
-     * @return True if the document exists, false otherwise.
-     * @throws MongoSReadException if there is an issue during the read operation.
+     * The return type is non-nullable so Kotlin callers never need `!!`,
+     * but — like Java's `Map.get` — this returns `null` at runtime when the
+     * key does not exist. Prefer [getOrNull] or the default-value overload
+     * when absence is expected.
+     *
+     * @param collection the collection name.
+     * @param key the key to look up.
+     * @param clazz the target type.
+     * @return the stored value, or null (typed as [T]) if the key does not exist.
+     * @throws MongoSReadException if the query fails.
+     * @throws MongoSTypeException if the stored value cannot be converted to [T].
      */
-    fun exists(
-        collection: String,
-        key: Any,
-    ): Boolean =
+    @Suppress("UNCHECKED_CAST")
+    fun <T : Any> get(collection: String, key: Any, clazz: Class<T>): T =
+        getOrNull(collection, key, clazz) as T
+
+    /**
+     * Kotlin convenience: `db.get<String>("users", "name")`.
+     * Same semantics as the `Class<T>` overload.
+     */
+    inline fun <reified T : Any> get(collection: String, key: Any): T =
+        get(collection, key, T::class.java)
+
+    /**
+     * Gets the value for the given key, or [default] if the key does not exist.
+     * This overload is always truly non-null.
+     *
+     * @param collection the collection name.
+     * @param key the key to look up.
+     * @param clazz the target type.
+     * @param default the value returned when the key is absent.
+     * @throws MongoSReadException if the query fails.
+     * @throws MongoSTypeException if the stored value cannot be converted to [T].
+     */
+    fun <T : Any> get(collection: String, key: Any, clazz: Class<T>, default: T): T =
+        getOrNull(collection, key, clazz) ?: default
+
+    /**
+     * Kotlin convenience: `db.get("users", "name", "fallback")`.
+     */
+    inline fun <reified T : Any> get(collection: String, key: Any, default: T): T =
+        get(collection, key, T::class.java, default)
+
+    /**
+     * Gets the value for the given key with an explicitly nullable result.
+     *
+     * @param collection the collection name.
+     * @param key the key to look up.
+     * @param clazz the target type.
+     * @return the stored value, or null if the key does not exist.
+     * @throws MongoSReadException if the query fails.
+     * @throws MongoSTypeException if the stored value cannot be converted to [T].
+     */
+    fun <T : Any> getOrNull(collection: String, key: Any, clazz: Class<T>): T? {
+        val document =
+            try {
+                collection(collection)
+                    .find(keyFilter(key))
+                    .projection(Document(VALUE_FIELD, 1))
+                    .limit(1)
+                    .firstOrNull()
+            } catch (e: Exception) {
+                throw MongoSReadException("Failed to get key=$key from $collection", e)
+            }
+        return document?.let { documentToTargetType(it, clazz) }
+    }
+
+    /**
+     * Kotlin convenience: `db.getOrNull<String>("users", "name")`.
+     */
+    inline fun <reified T : Any> getOrNull(collection: String, key: Any): T? =
+        getOrNull(collection, key, T::class.java)
+
+    /**
+     * Checks whether a document with the given key exists.
+     * Uses a count with `limit(1)` so it stays fast on large collections.
+     *
+     * @throws MongoSReadException if the query fails.
+     */
+    fun exists(collection: String, key: Any): Boolean =
         try {
-            database.getCollection(collection).countDocuments(createKeyFilter(key), com.mongodb.client.model.CountOptions().limit(1)) > 0
+            collection(collection).countDocuments(keyFilter(key), CountOptions().limit(1)) > 0
         } catch (e: Exception) {
-            logger.error("Failed to check exists for key=$key in $collection", e)
             throw MongoSReadException("Failed to check exists for key=$key in $collection", e)
         }
 
-    /**
-     * Gets a cached list of all collection names in the current database.
-     * Results are sorted for consistent ordering.
-     *
-     * @return A sorted list of collection names in the current database.
-     * @throws MongoSReadException if there is an issue retrieving the collection names.
-     */
-    fun getCollections(): List<String> =
-        try {
-            database.listCollectionNames().toList().sorted().also { collections ->
-                logger.debug("Retrieved ${collections.size} collections from database")
-            }
-        } catch (e: Exception) {
-            logger.error("Failed to list collections", e)
-            throw MongoSReadException("Failed to list collections", e)
-        }
+    // ---------------------------------------------------------------------
+    // Bulk read operations
+    // ---------------------------------------------------------------------
 
     /**
-     * Gets all keys ([KEY_FIELD]) in the specified collection with performance considerations.
-     * Note: This can be inefficient for very large collections. Consider using pagination for large datasets.
+     * Retrieves all values in a collection as a list of [T].
+     * Documents that cannot be converted are skipped with a warning.
      *
-     * @param collection The collection name.
-     * @return A list of keys.
-     * @throws MongoSReadException if there is an issue during the read operation.
-     */
-    fun getKeys(collection: String): List<String> =
-        try {
-            database.getCollection(collection)
-                .find()
-                .projection(Document(KEY_FIELD, 1))
-                .map { it[KEY_FIELD].toString() }
-                .toList()
-                .also { keys ->
-                    logger.debug("Retrieved ${keys.size} keys from collection=$collection")
-                }
-        } catch (e: Exception) {
-            logger.error("Failed to get keys from $collection", e)
-            throw MongoSReadException("Failed to get keys from $collection", e)
-        }
-
-    /**
-     * Retrieves all documents from the specified collection with optimized filtering and projection.
-     * Converts them to the specified type [T] with enhanced error handling.
-     *
-     * @param T The type of objects to retrieve.
-     * @param collection The name of the collection.
-     * @param filters A map where each entry represents field -> value pairs to filter by.
-     * @return A list of objects of the specified type [T].
-     * @throws MongoSReadException if there is an issue during the read operation.
+     * @param collection the collection name.
+     * @param clazz the target type.
+     * @param filters optional field -> value equality filters.
+     * @throws MongoSReadException if the query fails.
      */
     @JvmOverloads
     fun <T : Any> getAllList(
         collection: String,
         clazz: Class<T>,
         filters: Map<String, Any> = emptyMap(),
-    ): List<T> {
-        val bsonFilters = filters.map { Filters.eq(it.key, it.value) }
-        val finalFilter = if (bsonFilters.isEmpty()) BsonDocument() else Filters.and(bsonFilters)
-
-        return try {
-            database.getCollection(collection)
-                .find(finalFilter)
-                .mapNotNull { document ->
-                    try {
-                        documentToTargetType(document, clazz)
-                    } catch (e: Exception) {
-                        logger.warn("Failed to convert document to ${clazz.simpleName}: ${e.message}")
-                        null // Skip invalid documents instead of failing entirely
-                    }
-                }
+    ): List<T> =
+        try {
+            collection(collection)
+                .find(buildFilter(filters))
+                .mapNotNull { convertOrSkip(it, clazz) }
                 .toList()
-                .also { results ->
-                    logger.debug("Retrieved ${results.size} documents of type ${clazz.simpleName} from $collection")
-                }
         } catch (e: Exception) {
-            logger.error("Failed to getAllList from $collection", e)
             throw MongoSReadException("Failed to getAllList from $collection", e)
         }
-    }
 
-    /**
-     * Inline convenience method for getAllList with reified type parameter.
-     */
+    /** Kotlin convenience for [getAllList] with a reified type. */
     inline fun <reified T : Any> getAllList(
         collection: String,
         filters: Map<String, Any> = emptyMap(),
     ): List<T> = getAllList(collection, T::class.java, filters)
 
     /**
-     * Retrieves all documents from the specified collection as a map with optimized performance.
-     * Maps [KEY_FIELD] to objects of type [T] with proper error handling.
+     * Retrieves all values in a collection as a map of key -> [T].
+     * Documents without a key or that cannot be converted are skipped.
      *
-     * @param T The type of objects to retrieve.
-     * @param collection The name of the collection.
-     * @param filters A map where each entry represents field -> value pairs to filter by.
-     * @return A map where keys are from [KEY_FIELD] and values are objects of type [T].
-     * @throws MongoSReadException if there is an issue during the read operation.
+     * @param collection the collection name.
+     * @param clazz the target type.
+     * @param filters optional field -> value equality filters.
+     * @throws MongoSReadException if the query fails.
      */
     @JvmOverloads
     fun <T : Any> getAllMap(
         collection: String,
         clazz: Class<T>,
         filters: Map<String, Any> = emptyMap(),
-    ): Map<String, T> {
-        val bsonFilters = filters.map { Filters.eq(it.key, it.value) }
-        val finalFilter = if (bsonFilters.isEmpty()) BsonDocument() else Filters.and(bsonFilters)
-
-        return try {
-            val results = mutableMapOf<String, T>()
-            var processedCount = 0
-            var skippedCount = 0
-
-            database.getCollection(collection)
-                .find(finalFilter)
-                .forEach { doc ->
-                    try {
-                        val key = doc[KEY_FIELD]?.toString()
-                        val value = documentToTargetType(doc, clazz)
-                        if (key != null && value != null) {
-                            results[key] = value
-                            processedCount++
-                        } else {
-                            skippedCount++
-                        }
-                    } catch (e: Exception) {
-                        logger.warn("Failed to process document in getAllMap: ${e.message}")
-                        skippedCount++
-                    }
-                }
-
-            logger.debug("getAllMap from $collection: processed=$processedCount, skipped=$skippedCount")
+    ): Map<String, T> =
+        try {
+            val results = LinkedHashMap<String, T>()
+            collection(collection).find(buildFilter(filters)).forEach { doc ->
+                val key = doc[KEY_FIELD]?.toString() ?: return@forEach
+                convertOrSkip(doc, clazz)?.let { results[key] = it }
+            }
             results
         } catch (e: Exception) {
-            logger.error("Failed to getAllMap from $collection", e)
             throw MongoSReadException("Failed to getAllMap from $collection", e)
         }
-    }
 
-    /**
-     * Inline convenience method for getAllMap with reified type parameter.
-     */
+    /** Kotlin convenience for [getAllMap] with a reified type. */
     inline fun <reified T : Any> getAllMap(
         collection: String,
         filters: Map<String, Any> = emptyMap(),
     ): Map<String, T> = getAllMap(collection, T::class.java, filters)
 
-    /**
-     * Retrieves a value from the specified collection with the provided key using optimized queries.
-     * Includes comprehensive error handling and type conversion.
-     *
-     * @param T The type of the value to retrieve. Must be a non-nullable type.
-     * @param collection The name of the collection.
-     * @param key The key for the value.
-     * @param defaultValue The default value to return if the key does not exist.
-     * @return The value of the specified type [T], or [defaultValue] if not found.
-     * @throws MongoSReadException if there is an issue during the read operation.
-     * @throws MongoSTypeException if there is an issue converting the stored value to type [T].
-     */
-    @JvmOverloads
-    fun <T : Any> get(
-        collection: String,
-        key: Any,
-        clazz: Class<T>,
-        defaultValue: T? = null,
-    ): T? {
-        val document =
-            try {
-                getDocument(collection, key)
-            } catch (e: Exception) {
-                logger.error("Failed to get key=$key from $collection", e)
-                throw MongoSReadException("Failed to get key=$key from $collection", e)
-            }
+    /** Builds a combined equality filter from a map, or an empty filter. */
+    private fun buildFilter(filters: Map<String, Any>): Bson =
+        if (filters.isEmpty()) BsonDocument()
+        else Filters.and(filters.map { Filters.eq(it.key, it.value) })
 
-        return if (document != null) {
-            try {
-                documentToTargetType(document, clazz) ?: defaultValue
-            } catch (e: Exception) {
-                logger.warn("Failed to convert document to ${clazz.simpleName} for key=$key", e)
-                defaultValue
-            }
-        } else {
-            defaultValue
-        }
-    }
-
-    /**
-     * Inline convenience method for get with reified type parameter.
-     */
-    inline fun <reified T : Any> get(
-        collection: String,
-        key: Any,
-        defaultValue: T? = null,
-    ): T? = get(collection, key, T::class.java, defaultValue)
-
-    /**
-     * Enhanced helper function to convert a Document's VALUE_FIELD to the target type T.
-     * Handles various scenarios with improved error handling and performance.
-     *
-     * @param T The target type to convert to.
-     * @param document The MongoDB Document containing the VALUE_FIELD.
-     * @return The value converted to type T, or null if VALUE_FIELD is absent.
-     * @throws MongoSTypeException if conversion to type T fails.
-     */
-    fun <T : Any> documentToTargetType(
-        document: Document,
-        clazz: Class<T>,
-    ): T? {
-        val valuePart = document[VALUE_FIELD] ?: return null
-        return try {
-            when {
-                clazz.isAssignableFrom(valuePart::class.java) -> valuePart as T
-                Number::class.java.isAssignableFrom(clazz) && valuePart is Number -> {
-                    convertNumber(valuePart, clazz) ?: throw MongoSTypeException(
-                        "Unsupported number conversion: ${valuePart::class.java.name} -> ${clazz.name}",
-                    )
-                }
-                MongoSObject::class.java.isAssignableFrom(clazz) -> {
-                    val valueDoc = valuePart as? Document ?: Document.parse(gson.toJson(valuePart))
-                    gson.fromJson(valueDoc.toJson(), clazz)
-                }
-                else -> gson.fromJson(gson.toJsonTree(valuePart), clazz)
-            }
-        } catch (e: Exception) {
-            logger.error("Failed to convert value to ${clazz.name}", e)
-            throw MongoSTypeException("Failed to convert value to ${clazz.name}", e)
-        }
-    }
-
-    /**
-     * Inline convenience method for documentToTargetType with reified type parameter.
-     */
-    inline fun <reified T : Any> documentToTargetType(document: Document): T? = documentToTargetType(document, T::class.java)
-
-    /**
-     * Gets a single document from the specified collection with optimized query performance.
-     *
-     * @param collection The collection name.
-     * @param key The key for the document.
-     * @return The [Document] if found, otherwise null.
-     * @throws MongoSReadException if there is an issue during the read operation.
-     */
-    fun getDocument(
-        collection: String,
-        key: Any,
-    ): Document? =
+    /** Converts a document to [T], returning null (and logging) on failure. */
+    private fun <T : Any> convertOrSkip(document: Document, clazz: Class<T>): T? =
         try {
-            database.getCollection(collection)
-                .find(createKeyFilter(key))
-                .limit(1)
-                .firstOrNull()
+            documentToTargetType(document, clazz)
         } catch (e: Exception) {
-            logger.error("Failed to getDocument for key=$key in $collection", e)
+            logger.warn("Skipping document, cannot convert to {}: {}", clazz.simpleName, e.message)
+            null
+        }
+
+    // ---------------------------------------------------------------------
+    // Raw document access
+    // ---------------------------------------------------------------------
+
+    /**
+     * Gets the raw document for the given key.
+     *
+     * @return the full [Document], or null if not found.
+     * @throws MongoSReadException if the query fails.
+     */
+    fun getDocument(collection: String, key: Any): Document? =
+        try {
+            collection(collection).find(keyFilter(key)).limit(1).firstOrNull()
+        } catch (e: Exception) {
             throw MongoSReadException("Failed to getDocument for key=$key in $collection", e)
         }
 
     /**
-     * Retrieves documents from a collection that match the specified key with proper error handling.
+     * Gets all documents matching the given key as a lazy iterable.
      *
-     * @param collection The name of the collection.
-     * @param key The value of the key to filter by.
-     * @return A [FindIterable<Document>] containing the documents that match the criteria.
-     * @throws MongoSReadException if there is an issue during the read operation.
+     * @throws MongoSReadException if the query fails.
      */
-    fun getDocuments(
-        collection: String,
-        key: Any,
-    ): FindIterable<Document> =
+    fun getDocuments(collection: String, key: Any): FindIterable<Document> =
         try {
-            database.getCollection(collection).find(createKeyFilter(key))
+            collection(collection).find(keyFilter(key))
         } catch (e: Exception) {
-            logger.error("Failed to getDocuments for key=$key in $collection", e)
             throw MongoSReadException("Failed to getDocuments for key=$key in $collection", e)
         }
 
     /**
-     * Retrieves documents from a collection as a list with optimized performance.
+     * Gets all documents matching the given key as a list.
      *
-     * @param collection The name of the collection.
-     * @param key The value of the key to filter by.
-     * @return A [List<Document>] containing the documents that match the criteria.
-     * @throws MongoSReadException if there is an issue during the read operation.
+     * @throws MongoSReadException if the query fails.
      */
-    fun getDocumentsAsList(
-        collection: String,
-        key: Any,
-    ): List<Document> =
+    fun getDocumentsAsList(collection: String, key: Any): List<Document> =
+        getDocuments(collection, key).toList()
+
+    /**
+     * Gets all keys in a collection.
+     * Note: may be expensive on very large collections.
+     *
+     * @throws MongoSReadException if the query fails.
+     */
+    fun getKeys(collection: String): List<String> =
         try {
-            getDocuments(collection, key).toList().also { docs ->
-                logger.debug("Retrieved {} documents for key={} from {}", docs.size, key, collection)
-            }
+            collection(collection)
+                .find()
+                .projection(Document(KEY_FIELD, 1))
+                .mapNotNull { it[KEY_FIELD]?.toString() }
+                .toList()
         } catch (e: Exception) {
-            logger.error("Failed to getDocumentsAsList for key=$key in $collection", e)
-            throw MongoSReadException("Failed to getDocumentsAsList for key=$key in $collection", e)
+            throw MongoSReadException("Failed to get keys from $collection", e)
         }
 
     /**
-     * Converts a [MongoSObject] to a [Document] with optimized serialization.
-     * The [MongoSObject] itself becomes the content of the [VALUE_FIELD].
+     * Gets a sorted list of all collection names in this database.
      *
-     * @param mongoSObject The [MongoSObject] to convert.
-     * @return The [Document] representation, typically for the [VALUE_FIELD].
+     * @throws MongoSReadException if the query fails.
      */
-    internal fun convertMongoSObjectToDocumentValue(mongoSObject: MongoSObject): Document = Document.parse(gson.toJson(mongoSObject))
+    fun getCollections(): List<String> =
+        try {
+            database.listCollectionNames().toList().sorted()
+        } catch (e: Exception) {
+            throw MongoSReadException("Failed to list collections", e)
+        }
+
+    // ---------------------------------------------------------------------
+    // Type conversion
+    // ---------------------------------------------------------------------
 
     /**
-     * Converts any object to its [Document] representation using optimized Gson serialization.
+     * Converts a document's [VALUE_FIELD] to the target type [T].
+     * Handles direct assignment, numeric bridging, [MongoSObject] subclasses,
+     * and arbitrary POJOs via Gson.
+     *
+     * @return the converted value, or null if [VALUE_FIELD] is absent.
+     * @throws MongoSTypeException if conversion fails.
      */
+    @Suppress("UNCHECKED_CAST")
+    fun <T : Any> documentToTargetType(document: Document, clazz: Class<T>): T? {
+        val value = document[VALUE_FIELD] ?: return null
+        return try {
+            when {
+                // Value already has the requested type.
+                clazz.isAssignableFrom(value::class.java) -> value as T
+                // Numeric bridging (e.g. stored Long, requested Int).
+                value is Number && Number::class.java.isAssignableFrom(clazz) ->
+                    convertNumber(value, clazz)
+                        ?: throw MongoSTypeException(
+                            "Unsupported number conversion: ${value::class.java.name} -> ${clazz.name}",
+                        )
+                // MongoSObject subclasses are deserialized via Gson.
+                MongoSObject::class.java.isAssignableFrom(clazz) -> {
+                    val doc = value as? Document ?: Document.parse(gson.toJson(value))
+                    gson.fromJson(doc.toJson(), clazz)
+                }
+                // Fallback: generic POJO conversion via Gson.
+                else -> gson.fromJson(gson.toJsonTree(value), clazz)
+            }
+        } catch (e: MongoSTypeException) {
+            throw e
+        } catch (e: Exception) {
+            throw MongoSTypeException("Failed to convert value to ${clazz.name}", e)
+        }
+    }
+
+    /** Kotlin convenience for [documentToTargetType] with a reified type. */
+    inline fun <reified T : Any> documentToTargetType(document: Document): T? =
+        documentToTargetType(document, T::class.java)
+
+    // ---------------------------------------------------------------------
+    // Conversion utilities
+    // ---------------------------------------------------------------------
+
+    /** Converts any object to a MongoDB [Document] via Gson. */
     fun convertToDocument(obj: Any): Document = Document.parse(gson.toJson(obj))
 
-    /**
-     * Converts a [Document] to its JSON string representation with pretty printing.
-     *
-     * @param document The document to convert.
-     * @return The JSON string.
-     */
+    /** Converts a [Document] to its JSON string representation. */
     fun convertDocumentToJson(document: Document): String = gson.toJson(document)
 
-    /**
-     * Converts a JSON string to a [Document] with proper error handling.
-     *
-     * @param json The JSON string to convert.
-     * @return The [Document].
-     */
+    /** Parses a JSON string into a [Document]. */
     fun convertJsonToDocument(json: String): Document = Document.parse(json)
 
+    // ---------------------------------------------------------------------
+    // Maintenance
+    // ---------------------------------------------------------------------
+
     /**
-     * Enhanced method to save all documents in the collection to a JSON file.
-     * Includes progress logging, better error handling, and optimized memory usage for large collections.
+     * Exports every document in a collection to a pretty-printed JSON file.
+     * Documents are streamed so memory usage stays flat on large collections.
      *
-     * @param collection The name of the collection to save.
-     * @param path The directory path where the JSON file should be saved.
-     * @return The [File] object where the data was saved.
-     * @throws MongoSWriteException if there is an issue during the file writing process.
+     * @param collection the collection to export.
+     * @param path the directory the file is written into.
+     * @return the written file: `<db>.<collection>.json`.
+     * @throws MongoSWriteException if writing fails.
      */
-    fun saveAsJson(
-        collection: String,
-        path: String,
-    ): File {
+    fun saveAsJson(collection: String, path: String): File {
         try {
-            val directory = File(path)
-            if (!directory.exists()) {
-                directory.mkdirs()
-                logger.info("Created directory: ${directory.absolutePath}")
-            }
-
-            val documents = database.getCollection(collection).find()
+            val directory = File(path).apply { if (!exists()) mkdirs() }
             val file = File(directory, "${database.name}.$collection.json")
-
-            val prettyPrintSettings = JsonWriterSettings.builder().indent(true).build()
-            var documentCount = 0
+            val settings = JsonWriterSettings.builder().indent(true).build()
 
             file.bufferedWriter().use { writer ->
                 writer.write("[\n")
-                val iterator = documents.iterator()
+                val iterator = collection(collection).find().iterator()
                 while (iterator.hasNext()) {
-                    val doc = iterator.next()
-                    val documentJson = doc.toJson(prettyPrintSettings)
-                    writer.write(documentJson)
+                    writer.write(iterator.next().toJson(settings))
                     if (iterator.hasNext()) writer.write(",")
                     writer.newLine()
-                    documentCount++
-
-                    // Log progress for large collections
-                    if (documentCount % 1000 == 0) {
-                        logger.info("Saved $documentCount documents to JSON...")
-                    }
                 }
                 writer.write("]\n")
             }
 
-            logger.info("Successfully saved $documentCount documents from $collection to ${file.absolutePath}")
+            logger.info("Exported {} to {}", collection, file.absolutePath)
             return file
         } catch (e: Exception) {
-            logger.error("Failed to save $collection as JSON", e)
             throw MongoSWriteException("Failed to save $collection as JSON", e)
         }
     }
 
     /**
-     * Enhanced connection check with better error handling and logging.
-     * Checks if the database is connected and reachable by sending a ping command.
+     * Checks connectivity by sending a ping command.
      *
-     * @return True if connected and ping is successful, false otherwise.
-     * @throws MongoSConnectionException if there is an issue during the ping operation.
+     * @return true if the ping succeeds.
+     * @throws MongoSConnectionException if the ping fails.
      */
-    fun isConnected(): Boolean {
-        return try {
+    fun isConnected(): Boolean =
+        try {
             database.runCommand(BsonDocument("ping", BsonInt64(1)))
-            logger.debug("Database connection check successful")
             true
         } catch (e: MongoException) {
-            logger.error("MongoDB connection check failed", e)
             throw MongoSConnectionException("MongoDB connection check failed", e)
         }
-    }
 
     /**
-     * Gets performance statistics for a collection including document count and storage size.
-     *
-     * @param collection The collection name.
-     * @return A map containing collection statistics.
+     * Gets basic statistics for a collection (count, sizes, index count).
+     * Returns an empty map if the stats command fails.
      */
-    fun getCollectionStats(collection: String): Map<String, Any> {
-        return try {
+    fun getCollectionStats(collection: String): Map<String, Any> =
+        try {
             val stats = database.runCommand(Document("collStats", collection))
             mapOf(
                 "count" to (stats.getLong("count") ?: 0L),
@@ -719,12 +566,9 @@ open class Database {
                 "storageSize" to (stats.getLong("storageSize") ?: 0L),
                 "avgObjSize" to (stats.getDouble("avgObjSize") ?: 0.0),
                 "indexCount" to (stats.getInteger("nindexes") ?: 0),
-            ).also { collectionStats ->
-                logger.debug("Collection stats for {}: {}", collection, collectionStats)
-            }
+            )
         } catch (e: Exception) {
-            logger.warn("Failed to get stats for collection $collection: ${e.message}")
+            logger.warn("Failed to get stats for collection {}: {}", collection, e.message)
             emptyMap()
         }
-    }
 }

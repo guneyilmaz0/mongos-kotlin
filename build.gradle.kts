@@ -21,7 +21,7 @@ ktlint {
 }
 
 group = "net.guneyilmaz0.mongos4k"
-version = "1.5.0"
+version = "1.6.1"
 
 repositories {
     mavenCentral()
