@@ -22,6 +22,7 @@ group = "net.guneyilmaz0.mongos4k"
 version = "1.7.0"
 
 repositories {
+    maven("https://maven-central.storage-download.googleapis.com/maven2/")
     mavenCentral()
 }
 
