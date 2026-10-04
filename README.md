@@ -11,8 +11,8 @@
 [![CI/CD Pipeline](https://github.com/guneyilmaz0/mongos-kotlin/actions/workflows/ci.yml/badge.svg)](https://github.com/guneyilmaz0/mongos-kotlin/actions/workflows/ci.yml)
 [![Maven Central](https://img.shields.io/maven-central/v/net.guneyilmaz0.mongos4k/mongos-kotlin.svg)](https://search.maven.org/artifact/net.guneyilmaz0.mongos4k/mongos-kotlin)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Kotlin](https://img.shields.io/badge/kotlin-2.0.0-blue.svg?logo=kotlin)](http://kotlinlang.org)
-[![MongoDB](https://img.shields.io/badge/MongoDB-5.1.1-green.svg)](https://www.mongodb.com/)
+[![Kotlin](https://img.shields.io/badge/kotlin-2.4.20-blue.svg?logo=kotlin)](http://kotlinlang.org)
+[![MongoDB](https://img.shields.io/badge/MongoDB-5.13.0-green.svg)](https://www.mongodb.com/)
 
 </div>
 
@@ -24,7 +24,9 @@ A professional, high-performance, and easy-to-use Kotlin wrapper for MongoDB ope
 - **⚡ High Performance**: Optimized connection pooling and automatic indexing
 - **🛡️ Professional Error Handling**: Comprehensive exception hierarchy with detailed error information
 - **📊 Performance Monitoring**: Built-in statistics and connection health monitoring
-- **🔄 Async/Await Support**: Full coroutines integration for non-blocking operations
+- **🔄 Fire-and-forget Writes**: `async = true` runs writes on a lazy daemon thread pool, no coroutines needed
+- **☕ Java & Kotlin**: Same API for both; `Class<T>` overloads for Java, reified overloads for Kotlin
+- **🪶 Lightweight**: ~30 KB jar, only the MongoDB driver, Gson and slf4j-api as dependencies
 - **📝 Comprehensive Logging**: Structured logging with configurable levels
 - **🏗️ Resource Management**: Automatic connection lifecycle management
 - **🔍 Change Streams**: Real-time data change notifications
@@ -131,28 +133,31 @@ MongoS(mongoUri, "myDatabase").use { db ->
 }
 ```
 
-### Asynchronous Operations
+### Asynchronous Writes & Batch Inserts
 
 ```kotlin
-import kotlinx.coroutines.*
 import net.guneyilmaz0.mongos4k.MongoS
 
-suspend fun performAsyncOperations() = coroutineScope {
-    MongoS("myDatabase").use { db ->
-        
-        // Async set operations
-        db.set("users", "async_user", User("Async User", "async@example.com", 25), async = true)
-        
-        // Batch insert with coroutines
-        val documents = (1..1000).map { i ->
-            org.bson.Document()
-                .append("key", "batch_$i")
-                .append("value", User("User $i", "user$i@example.com", 20 + i % 50))
-        }
-        
-        val insertResult = db.insertMany("users", documents)
-        println("Inserted ${insertResult.insertedIds.size} documents")
+MongoS("myDatabase").use { db ->
+    // Fire-and-forget: errors are logged, not thrown
+    db.set("users", "async_user", User("Async User", "async@example.com", 25), async = true)
+
+    val documents = (1..1000).map { i ->
+        org.bson.Document()
+            .append("key", "batch_$i")
+            .append("value", User("User $i", "user$i@example.com", 20 + i % 50))
     }
+    println("Inserted ${db.insertMany("users", documents).insertedIds.size} documents")
+}
+```
+
+### Using from Java
+
+```java
+try (MongoS db = new MongoS("myDatabase")) {
+    db.set("users", "alice", "Alice");
+    String name = db.get("users", "alice", String.class, "unknown");
+    String maybe = db.getOrNull("users", "bob", String.class); // null if absent
 }
 ```
 
@@ -379,9 +384,6 @@ cd mongos-kotlin
 
 # Build the project  
 ./gradlew build
-
-# Format code
-./gradlew ktlintFormat
 ```
 
 ## 📄 License
@@ -395,7 +397,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🙏 Acknowledgments
 
 - MongoDB team for the excellent Java driver
-- Kotlin team for the amazing language and coroutines
+- Kotlin team for the amazing language
 - JetBrains for the development tools
 - The open-source community for inspiration and feedback
 

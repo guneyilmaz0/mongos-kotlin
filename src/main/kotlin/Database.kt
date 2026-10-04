@@ -6,16 +6,11 @@ import com.mongodb.MongoException
 import com.mongodb.client.FindIterable
 import com.mongodb.client.MongoCollection
 import com.mongodb.client.MongoDatabase
-import com.mongodb.client.model.CountOptions
 import com.mongodb.client.model.Filters
-import com.mongodb.client.model.IndexOptions
 import com.mongodb.client.model.Indexes
+import com.mongodb.client.model.Projections
 import com.mongodb.client.model.ReplaceOptions
 import com.mongodb.client.result.InsertManyResult
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 import net.guneyilmaz0.mongos4k.exceptions.MongoSConnectionException
 import net.guneyilmaz0.mongos4k.exceptions.MongoSReadException
 import net.guneyilmaz0.mongos4k.exceptions.MongoSTypeException
@@ -28,6 +23,8 @@ import org.bson.json.JsonWriterSettings
 import org.slf4j.LoggerFactory
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 /**
  * Lightweight key-value style wrapper around a MongoDB database.
@@ -49,16 +46,21 @@ open class Database {
 
     companion object {
         /** Document field that stores the key. */
-        @JvmStatic
-        val KEY_FIELD = "key"
+        const val KEY_FIELD = "key"
 
         /** Document field that stores the value. */
-        @JvmStatic
-        val VALUE_FIELD = "value"
+        const val VALUE_FIELD = "value"
 
         /** Shared Gson instance used for POJO <-> Document conversion. */
-        @JvmStatic
+        @JvmField
         val gson: Gson = GsonBuilder().serializeNulls().create()
+
+        /** Daemon pool for fire-and-forget async writes; created on first use, so sync users pay nothing. */
+        private val asyncExecutor: ExecutorService by lazy {
+            Executors.newCachedThreadPool { runnable ->
+                Thread(runnable, "mongos-async").apply { isDaemon = true }
+            }
+        }
 
         /**
          * Converts a [Number] to the requested numeric type.
@@ -70,20 +72,17 @@ open class Database {
         @Suppress("UNCHECKED_CAST")
         fun <T> convertNumber(number: Number, clazz: Class<T>): T? =
             when (clazz) {
-                Int::class.java, java.lang.Integer::class.java -> number.toInt() as T
-                Long::class.java, java.lang.Long::class.java -> number.toLong() as T
-                Double::class.java, java.lang.Double::class.java -> number.toDouble() as T
-                Float::class.java, java.lang.Float::class.java -> number.toFloat() as T
-                Short::class.java, java.lang.Short::class.java -> number.toShort() as T
-                Byte::class.java, java.lang.Byte::class.java -> number.toByte() as T
+                Int::class.javaPrimitiveType, Int::class.javaObjectType -> number.toInt() as T
+                Long::class.javaPrimitiveType, Long::class.javaObjectType -> number.toLong() as T
+                Double::class.javaPrimitiveType, Double::class.javaObjectType -> number.toDouble() as T
+                Float::class.javaPrimitiveType, Float::class.javaObjectType -> number.toFloat() as T
+                Short::class.javaPrimitiveType, Short::class.javaObjectType -> number.toShort() as T
+                Byte::class.javaPrimitiveType, Byte::class.javaObjectType -> number.toByte() as T
                 else -> null
             }
     }
 
     private val logger = LoggerFactory.getLogger(Database::class.java)
-
-    /** Coroutine scope for fire-and-forget async writes. */
-    private val asyncScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** Caches collection handles so repeated access avoids re-resolution. */
     private val collectionCache = ConcurrentHashMap<String, MongoCollection<Document>>()
@@ -122,10 +121,7 @@ open class Database {
         val coll = collectionCache.computeIfAbsent(name) { database.getCollection(it) }
         if (indexedCollections.add(name)) {
             try {
-                coll.createIndex(
-                    Indexes.ascending(KEY_FIELD),
-                    IndexOptions().background(true).name("${KEY_FIELD}_idx"),
-                )
+                coll.createIndex(Indexes.ascending(KEY_FIELD))
             } catch (e: Exception) {
                 // Retry on next access instead of failing the actual operation.
                 indexedCollections.remove(name)
@@ -159,11 +155,11 @@ open class Database {
         val options = ReplaceOptions().upsert(true)
 
         if (async) {
-            asyncScope.launch {
+            asyncExecutor.execute {
                 try {
                     collection(collection).replaceOne(keyFilter(key), document, options)
                 } catch (e: Exception) {
-                    logger.error("Async set failed for key=$key in $collection", e)
+                    logger.error("Async set failed for key={} in {}", key, collection, e)
                 }
             }
         } else {
@@ -271,7 +267,7 @@ open class Database {
             try {
                 collection(collection)
                     .find(keyFilter(key))
-                    .projection(Document(VALUE_FIELD, 1))
+                    .projection(Projections.fields(Projections.include(VALUE_FIELD), Projections.excludeId()))
                     .limit(1)
                     .firstOrNull()
             } catch (e: Exception) {
@@ -288,13 +284,17 @@ open class Database {
 
     /**
      * Checks whether a document with the given key exists.
-     * Uses a count with `limit(1)` so it stays fast on large collections.
+     * Fetches at most one document with an empty projection, so it stays fast on large collections.
      *
      * @throws MongoSReadException if the query fails.
      */
     fun exists(collection: String, key: Any): Boolean =
         try {
-            collection(collection).countDocuments(keyFilter(key), CountOptions().limit(1)) > 0
+            collection(collection)
+                .find(keyFilter(key))
+                .projection(Projections.excludeId())
+                .limit(1)
+                .first() != null
         } catch (e: Exception) {
             throw MongoSReadException("Failed to check exists for key=$key in $collection", e)
         }
@@ -426,7 +426,7 @@ open class Database {
         try {
             collection(collection)
                 .find()
-                .projection(Document(KEY_FIELD, 1))
+                .projection(Projections.fields(Projections.include(KEY_FIELD), Projections.excludeId()))
                 .mapNotNull { it[KEY_FIELD]?.toString() }
                 .toList()
         } catch (e: Exception) {
@@ -496,8 +496,8 @@ open class Database {
     /** Converts any object to a MongoDB [Document] via Gson. */
     fun convertToDocument(obj: Any): Document = Document.parse(gson.toJson(obj))
 
-    /** Converts a [Document] to its JSON string representation. */
-    fun convertDocumentToJson(document: Document): String = gson.toJson(document)
+    /** Converts a [Document] to its (extended) JSON string representation. */
+    fun convertDocumentToJson(document: Document): String = document.toJson()
 
     /** Parses a JSON string into a [Document]. */
     fun convertJsonToDocument(json: String): Document = Document.parse(json)
@@ -559,14 +559,22 @@ open class Database {
      */
     fun getCollectionStats(collection: String): Map<String, Any> =
         try {
-            val stats = database.runCommand(Document("collStats", collection))
-            mapOf(
-                "count" to (stats.getLong("count") ?: 0L),
-                "size" to (stats.getLong("size") ?: 0L),
-                "storageSize" to (stats.getLong("storageSize") ?: 0L),
-                "avgObjSize" to (stats.getDouble("avgObjSize") ?: 0.0),
-                "indexCount" to (stats.getInteger("nindexes") ?: 0),
-            )
+            val stats =
+                collection(collection)
+                    .aggregate(listOf(Document("\$collStats", Document("storageStats", Document()))))
+                    .first()
+            val storage = stats?.get("storageStats", Document::class.java)
+            if (storage == null) {
+                emptyMap()
+            } else {
+                mapOf(
+                    "count" to ((storage["count"] as? Number)?.toLong() ?: 0L),
+                    "size" to ((storage["size"] as? Number)?.toLong() ?: 0L),
+                    "storageSize" to ((storage["storageSize"] as? Number)?.toLong() ?: 0L),
+                    "avgObjSize" to ((storage["avgObjSize"] as? Number)?.toDouble() ?: 0.0),
+                    "indexCount" to ((storage["nindexes"] as? Number)?.toInt() ?: 0),
+                )
+            }
         } catch (e: Exception) {
             logger.warn("Failed to get stats for collection {}: {}", collection, e.message)
             emptyMap()

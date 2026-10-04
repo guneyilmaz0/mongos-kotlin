@@ -1,44 +1,41 @@
 plugins {
-    kotlin("jvm") version "2.0.0"
+    kotlin("jvm") version "2.4.20"
     `maven-publish`
     signing
-    id("org.jetbrains.dokka") version "1.9.10"
+    id("org.jetbrains.dokka") version "2.2.0"
 }
 
 kotlin {
     jvmToolchain(21)
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        freeCompilerArgs.addAll("-jvm-default=no-compatibility", "-Xjsr305=strict")
+    }
+}
+
+// Java 17 bytecode and API level so the library works for Java 17+ consumers.
+tasks.withType<JavaCompile>().configureEach {
+    options.release.set(17)
 }
 
 group = "net.guneyilmaz0.mongos4k"
-version = "1.6.1"
+version = "1.7.0"
 
 repositories {
     mavenCentral()
 }
 
 dependencies {
-    // Main dependencies
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
-    implementation("org.mongodb:mongodb-driver-sync:5.1.1")
-    implementation("com.google.code.gson:gson:2.10.1")
-    implementation("ch.qos.logback:logback-classic:1.5.6")
-    // Test dependencies
-    testImplementation("org.jetbrains.kotlin:kotlin-test")
-    testImplementation("org.junit.jupiter:junit-jupiter:5.10.0")
-    testImplementation("org.mockito.kotlin:mockito-kotlin:5.1.0")
-    testImplementation("org.testcontainers:mongodb:1.19.1")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.0")
-    // Test runtime
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-}
+    // Exposed in the public API (MongoCollection, Document, Gson), so consumers get them transitively.
+    api("org.mongodb:mongodb-driver-sync:5.13.0")
+    api("com.google.code.gson:gson:2.14.0")
+    // Logging facade only; consumers bring their own backend.
+    implementation("org.slf4j:slf4j-api:2.0.17")
 
-tasks.withType<Jar> {
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    from(sourceSets.main.get().output)
-    dependsOn(configurations.runtimeClasspath)
-    from({
-        configurations.runtimeClasspath.get().filter { it.name.endsWith("jar") }.map { zipTree(it) }
-    })
+    testImplementation("org.jetbrains.kotlin:kotlin-test")
+    testImplementation("org.junit.jupiter:junit-jupiter:6.1.3")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    testRuntimeOnly("ch.qos.logback:logback-classic:1.6.5")
 }
 
 tasks.test {

@@ -1,10 +1,5 @@
 package net.guneyilmaz0.mongos4k
 
-import com.google.gson.Gson
-import com.google.gson.GsonBuilder
-import com.google.gson.JsonDeserializer
-import com.google.gson.JsonPrimitive
-import com.google.gson.JsonSerializer
 import org.bson.Document
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -26,26 +21,6 @@ import java.util.UUID
  */
 @Suppress("unused")
 abstract class MongoSObject {
-    companion object {
-        private val gson: Gson =
-            GsonBuilder()
-                .setPrettyPrinting()
-                .serializeNulls()
-                .registerTypeAdapter(
-                    LocalDateTime::class.java,
-                    JsonSerializer<LocalDateTime> { src, _, _ ->
-                        JsonPrimitive(src.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
-                    },
-                )
-                .registerTypeAdapter(
-                    LocalDateTime::class.java,
-                    JsonDeserializer { json, _, _ ->
-                        LocalDateTime.parse(json.asString, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
-                    },
-                )
-                .create()
-    }
-
     /**
      * Unique identifier for the object. Automatically generated if not set.
      */
@@ -55,13 +30,13 @@ abstract class MongoSObject {
     /**
      * Timestamp when the object was created. Automatically set on instantiation.
      */
-    var createdAt: String = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+    var createdAt: String = now()
         protected set
 
     /**
      * Timestamp when the object was last updated. Updated automatically on modifications.
      */
-    var updatedAt: String = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+    var updatedAt: String = createdAt
         protected set
 
     /**
@@ -70,19 +45,14 @@ abstract class MongoSObject {
     var version: Int = 1
         protected set
 
-    init {
-        // Initialize timestamps
-        val now = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
-        createdAt = now
-        updatedAt = now
-    }
-
     /**
      * Updates the updatedAt timestamp and increments the version.
      * Call this method whenever the object is modified.
      */
+    private fun now(): String = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+
     protected fun markAsUpdated() {
-        updatedAt = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+        updatedAt = now()
         version++
     }
 
@@ -97,11 +67,11 @@ abstract class MongoSObject {
     }
 
     /**
-     * Converts the object to its JSON representation using optimized Gson serialization.
+     * Converts the object to its JSON representation using the shared [Database.gson] instance.
      *
      * @return JSON string representation of the object.
      */
-    fun toJson(): String = gson.toJson(this)
+    fun toJson(): String = Database.gson.toJson(this)
 
     /**
      * Converts the object to a MongoDB Document for storage.
@@ -120,7 +90,7 @@ abstract class MongoSObject {
         val copy = this.javaClass.getDeclaredConstructor().newInstance()
         copy.mongoId = this.mongoId
         copy.createdAt = this.createdAt
-        copy.updatedAt = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+        copy.updatedAt = now()
         copy.version = this.version + 1
         return copy
     }
