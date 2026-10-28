@@ -1,4 +1,4 @@
-package net.guneyilmaz0.mongos4k
+package com.swadedev.mongos4k
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse

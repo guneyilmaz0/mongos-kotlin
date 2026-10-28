@@ -1,4 +1,4 @@
-package net.guneyilmaz0.mongos4k
+package com.swadedev.mongos4k
 
 import org.bson.Document
 import java.time.LocalDateTime

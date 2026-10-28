@@ -1,12 +1,12 @@
-package net.guneyilmaz0.mongos4k;
+package com.swadedev.mongos4k;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Collections;
-import net.guneyilmaz0.mongos4k.exceptions.MongoSException;
-import net.guneyilmaz0.mongos4k.exceptions.MongoSReadException;
+import com.swadedev.mongos4k.exceptions.MongoSException;
+import com.swadedev.mongos4k.exceptions.MongoSReadException;
 import org.bson.Document;
 import org.junit.jupiter.api.Test;
 

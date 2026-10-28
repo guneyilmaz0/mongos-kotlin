@@ -9,7 +9,7 @@
 <div align="center">
 
 [![CI/CD Pipeline](https://github.com/guneyilmaz0/mongos-kotlin/actions/workflows/ci.yml/badge.svg)](https://github.com/guneyilmaz0/mongos-kotlin/actions/workflows/ci.yml)
-[![Maven Central](https://img.shields.io/maven-central/v/net.guneyilmaz0.mongos4k/mongos-kotlin.svg)](https://search.maven.org/artifact/net.guneyilmaz0.mongos4k/mongos-kotlin)
+[![Maven Central](https://img.shields.io/maven-central/v/com.swadedev.mongos4k/mongos-kotlin.svg)](https://central.sonatype.com/artifact/com.swadedev.mongos4k/mongos-kotlin)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Kotlin](https://img.shields.io/badge/kotlin-2.4.20-blue.svg?logo=kotlin)](http://kotlinlang.org)
 [![MongoDB](https://img.shields.io/badge/MongoDB-5.13.0-green.svg)](https://www.mongodb.com/)
@@ -46,7 +46,7 @@ A professional, high-performance, and easy-to-use Kotlin wrapper for MongoDB ope
 
 ```kotlin
 dependencies {
-    implementation("com.github.guneyilmaz0:mongos-kotlin:VERSION")
+    implementation("com.swadedev.mongos4k:mongos-kotlin:VERSION")
 }
 ```
 
@@ -54,7 +54,7 @@ dependencies {
 
 ```gradle
 dependencies {
-    implementation 'com.github.guneyilmaz0:mongos-kotlin:VERSION'
+    implementation 'com.swadedev.mongos4k:mongos-kotlin:VERSION'
 }
 ```
 
@@ -62,7 +62,7 @@ dependencies {
 
 ```xml
 <dependency>
-    <groupId>com.github.guneyilmaz0</groupId>
+    <groupId>com.swadedev.mongos4k</groupId>
     <artifactId>mongos-kotlin</artifactId>
     <version>VERSION</version>
 </dependency>
@@ -73,8 +73,8 @@ dependencies {
 ### Basic Usage
 
 ```kotlin
-import net.guneyilmaz0.mongos4k.MongoS
-import net.guneyilmaz0.mongos4k.MongoSObject
+import com.swadedev.mongos4k.MongoS
+import com.swadedev.mongos4k.MongoSObject
 
 // Data class extending MongoSObject for automatic features
 data class User(
@@ -112,7 +112,7 @@ fun main() {
 ### Advanced Configuration
 
 ```kotlin
-import net.guneyilmaz0.mongos4k.MongoS
+import com.swadedev.mongos4k.MongoS
 
 // Custom MongoDB URI with authentication
 val mongoUri = "mongodb://username:password@host1:27017,host2:27017/admin?replicaSet=myReplicaSet"
@@ -136,7 +136,7 @@ MongoS(mongoUri, "myDatabase").use { db ->
 ### Asynchronous Writes & Batch Inserts
 
 ```kotlin
-import net.guneyilmaz0.mongos4k.MongoS
+import com.swadedev.mongos4k.MongoS
 
 MongoS("myDatabase").use { db ->
     // Fire-and-forget: errors are logged, not thrown
@@ -164,7 +164,7 @@ try (MongoS db = new MongoS("myDatabase")) {
 ### Real-time Data Monitoring
 
 ```kotlin
-import net.guneyilmaz0.mongos4k.MongoS
+import com.swadedev.mongos4k.MongoS
 
 MongoS("myDatabase").use { db ->
     // Watch for changes in real-time
@@ -191,7 +191,7 @@ MongoS("myDatabase").use { db ->
 ### Professional Object Model
 
 ```kotlin
-import net.guneyilmaz0.mongos4k.MongoSObject
+import com.swadedev.mongos4k.MongoSObject
 import java.time.LocalDateTime
 
 data class Product(
@@ -236,7 +236,7 @@ if (product.isValid()) {
 ### Error Handling
 
 ```kotlin
-import net.guneyilmaz0.mongos4k.exceptions.*
+import com.swadedev.mongos4k.exceptions.*
 
 try {
     MongoS("nonexistent-db").use { db ->
@@ -256,7 +256,7 @@ try {
 ### Performance Optimization
 
 ```kotlin
-import net.guneyilmaz0.mongos4k.MongoS
+import com.swadedev.mongos4k.MongoS
 
 MongoS("myDatabase").use { db ->
     // Filtered queries for better performance

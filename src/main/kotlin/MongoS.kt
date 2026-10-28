@@ -1,4 +1,4 @@
-package net.guneyilmaz0.mongos4k
+package com.swadedev.mongos4k
 
 import com.mongodb.ConnectionString
 import com.mongodb.MongoClientSettings
@@ -7,7 +7,7 @@ import com.mongodb.client.ChangeStreamIterable
 import com.mongodb.client.MongoClient
 import com.mongodb.client.MongoClients
 import com.mongodb.client.MongoCollection
-import net.guneyilmaz0.mongos4k.exceptions.MongoSConnectionException
+import com.swadedev.mongos4k.exceptions.MongoSConnectionException
 import org.bson.Document
 import org.slf4j.LoggerFactory
 import java.util.concurrent.TimeUnit

@@ -1,4 +1,4 @@
-package net.guneyilmaz0.mongos4k
+package com.swadedev.mongos4k
 
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
@@ -11,10 +11,10 @@ import com.mongodb.client.model.Indexes
 import com.mongodb.client.model.Projections
 import com.mongodb.client.model.ReplaceOptions
 import com.mongodb.client.result.InsertManyResult
-import net.guneyilmaz0.mongos4k.exceptions.MongoSConnectionException
-import net.guneyilmaz0.mongos4k.exceptions.MongoSReadException
-import net.guneyilmaz0.mongos4k.exceptions.MongoSTypeException
-import net.guneyilmaz0.mongos4k.exceptions.MongoSWriteException
+import com.swadedev.mongos4k.exceptions.MongoSConnectionException
+import com.swadedev.mongos4k.exceptions.MongoSReadException
+import com.swadedev.mongos4k.exceptions.MongoSTypeException
+import com.swadedev.mongos4k.exceptions.MongoSWriteException
 import org.bson.BsonDocument
 import org.bson.BsonInt64
 import org.bson.Document

@@ -6,7 +6,7 @@
     </appender>
 
     <logger name="org.mongodb.driver" level="INFO" />
-    <logger name="net.guneyilmaz0.mongos4k" level="DEBUG" />
+    <logger name="com.swadedev.mongos4k" level="DEBUG" />
 
     <root level="INFO">
         <appender-ref ref="CONSOLE" />
