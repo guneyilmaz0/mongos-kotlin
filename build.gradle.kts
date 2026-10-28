@@ -18,8 +18,8 @@ tasks.withType<JavaCompile>().configureEach {
     options.release.set(17)
 }
 
-group = "net.guneyilmaz0.mongos4k"
-version = "1.7.0"
+group = "com.swadedev.mongos4k"
+version = providers.gradleProperty("version").get()
 
 repositories {
     maven("https://maven-central.storage-download.googleapis.com/maven2/")
@@ -48,6 +48,15 @@ java {
     withSourcesJar()
 }
 
+// The library is Kotlin-only, so the javadoc JAR Maven Central requires carries the Dokka HTML instead.
+tasks.named<Jar>("javadocJar") { from(tasks.named("dokkaGeneratePublicationHtml")) }
+// Ship the license inside every JAR, as Maven Central consumers expect.
+tasks.withType<Jar>().configureEach { from(rootProject.file("LICENSE")) { into("META-INF") } }
+tasks.withType<AbstractArchiveTask>().configureEach {
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+}
+
 publishing {
     publications {
         create<MavenPublication>("maven") {
@@ -60,6 +69,7 @@ publishing {
                     license {
                         name.set("MIT License")
                         url.set("https://opensource.org/licenses/MIT")
+                        distribution.set("repo")
                     }
                 }
 
@@ -68,15 +78,44 @@ publishing {
                         id.set("guneyilmaz0")
                         name.set("Güney Yılmaz")
                         email.set("guneyyilmaz2707@gmail.com")
+                        url.set("https://github.com/guneyilmaz0")
                     }
+                }
+                issueManagement {
+                    system.set("GitHub")
+                    url.set("https://github.com/guneyilmaz0/mongos-kotlin/issues")
                 }
 
                 scm {
                     connection.set("scm:git:git://github.com/guneyilmaz0/mongos-kotlin.git")
-                    developerConnection.set("scm:git:ssh://github.com:guneyilmaz0/mongos-kotlin.git")
+                    developerConnection.set("scm:git:ssh://git@github.com/guneyilmaz0/mongos-kotlin.git")
                     url.set("https://github.com/guneyilmaz0/mongos-kotlin/tree/main")
                 }
             }
         }
     }
+    // A local Maven layout that the Central Portal bundle is built from; nothing is uploaded by Gradle.
+    repositories { maven { name = "staging"; url = uri(layout.buildDirectory.dir("staging-deploy")) } }
+}
+
+// Signs only when an ASCII-armored key is supplied, for example through ORG_GRADLE_PROJECT_signingKey in CI.
+signing {
+    val key = providers.gradleProperty("signingKey").orNull
+    if (key != null) {
+        useInMemoryPgpKeys(key, providers.gradleProperty("signingPassword").orNull)
+        sign(publishing.publications["maven"])
+    }
+}
+
+tasks.register<Delete>("cleanStaging") { delete(layout.buildDirectory.dir("staging-deploy")) }
+tasks.named("publishMavenPublicationToStagingRepository") { dependsOn("cleanStaging") }
+
+tasks.register<Zip>("centralBundle") {
+    group = "release"
+    description = "Builds the Maven Central Portal upload bundle from the staging repository"
+    dependsOn("publishAllPublicationsToStagingRepository")
+    from(layout.buildDirectory.dir("staging-deploy"))
+    exclude("**/maven-metadata*")
+    archiveFileName.set("central-bundle-${project.version}.zip")
+    destinationDirectory.set(layout.buildDirectory.dir("distributions"))
 }
