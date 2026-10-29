@@ -2,6 +2,7 @@ package com.swadedev.mongos4k
 
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
+import com.mongodb.MongoCommandException
 import com.mongodb.MongoException
 import com.mongodb.client.FindIterable
 import com.mongodb.client.MongoCollection
@@ -54,6 +55,13 @@ open class Database {
         /** Shared Gson instance used for POJO <-> Document conversion. */
         @JvmField
         val gson: Gson = GsonBuilder().serializeNulls().create()
+
+        /** IndexOptionsConflict and IndexKeySpecsConflict: an index on the same keys already exists. */
+        private val INDEX_CONFLICT_CODES = setOf(85, 86)
+
+        /** True when one of [indexes] (as returned by `listIndexes`) leads with the key field, so it serves key lookups. */
+        internal fun hasKeyIndex(indexes: List<Document>): Boolean =
+            indexes.any { it.get("key", Document::class.java)?.keys?.firstOrNull() == KEY_FIELD }
 
         /** Daemon pool for fire-and-forget async writes; created on first use, so sync users pay nothing. */
         private val asyncExecutor: ExecutorService by lazy {
@@ -116,12 +124,23 @@ open class Database {
     /** Builds the standard key filter used by all key-based operations. */
     private fun keyFilter(key: Any): Bson = Filters.eq(KEY_FIELD, key)
 
-    /** Returns a cached collection handle, ensuring the key index exists. */
+    /**
+     * Returns a cached collection handle, ensuring the key index exists.
+     *
+     * An index the caller already created on the key field (for example a unique one) is reused, since the
+     * server rejects a second `key_1` index with different options.
+     */
     private fun collection(name: String): MongoCollection<Document> {
         val coll = collectionCache.computeIfAbsent(name) { database.getCollection(it) }
         if (indexedCollections.add(name)) {
             try {
-                coll.createIndex(Indexes.ascending(KEY_FIELD))
+                if (!hasKeyIndex(coll.listIndexes().into(mutableListOf()))) coll.createIndex(Indexes.ascending(KEY_FIELD))
+            } catch (e: MongoCommandException) {
+                // A conflicting key index created in the meantime serves key lookups as well.
+                if (e.errorCode !in INDEX_CONFLICT_CODES) {
+                    indexedCollections.remove(name)
+                    logger.warn("Index creation failed for {}: {}", name, e.message)
+                }
             } catch (e: Exception) {
                 // Retry on next access instead of failing the actual operation.
                 indexedCollections.remove(name)

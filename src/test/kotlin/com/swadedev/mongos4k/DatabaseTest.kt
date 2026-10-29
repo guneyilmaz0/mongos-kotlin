@@ -1,6 +1,7 @@
 package com.swadedev.mongos4k
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -70,6 +71,30 @@ class DatabaseTest {
             assertNotNull(document)
             assertEquals("John", document.getString("name"))
             assertEquals(25, document.getInteger("age"))
+        }
+    }
+
+    @Nested
+    @DisplayName("Key Index Detection Tests")
+    inner class KeyIndexDetectionTests {
+        private fun index(name: String, vararg keys: String, unique: Boolean = false) =
+            org.bson.Document("v", 2).append("key", org.bson.Document(keys.associateWith { 1 })).append("name", name)
+                .apply { if (unique) append("unique", true) }
+
+        @Test
+        fun `should reuse an existing unique key index`() {
+            assertTrue(Database.hasKeyIndex(listOf(index("_id_", "_id"), index("key_1", "key", unique = true))))
+        }
+
+        @Test
+        fun `should reuse a compound index led by the key field`() {
+            assertTrue(Database.hasKeyIndex(listOf(index("key_1_value_1", "key", "value"))))
+        }
+
+        @Test
+        fun `should create an index when none leads with the key field`() {
+            assertFalse(Database.hasKeyIndex(listOf(index("_id_", "_id"), index("value_1_key_1", "value", "key"))))
+            assertFalse(Database.hasKeyIndex(emptyList()))
         }
     }
 }
